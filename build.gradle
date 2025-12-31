@@ -1,0 +1,83 @@
+plugins {
+  id 'java-library'
+  id 'maven-publish'
+}
+
+group = 'me.hanju.fluxhandle'
+version = '0.1.0'
+description = 'A lightweight wrapper for Project Reactor Flux that bridges reactive streams to listener-based callbacks with incremental result building'
+
+java {
+  toolchain { languageVersion = JavaLanguageVersion.of(21) }
+  withSourcesJar()
+  withJavadocJar()
+}
+
+tasks.withType(JavaCompile).configureEach {
+  options.encoding = 'UTF-8'
+}
+
+tasks.withType(Javadoc).configureEach {
+  options.encoding = 'UTF-8'
+  options.charSet = 'UTF-8'
+  failOnError = false
+}
+
+tasks.named('test') {
+  useJUnitPlatform()
+}
+
+repositories {
+  mavenCentral()
+}
+
+dependencies {
+  api 'org.slf4j:slf4j-api:2.0.17'
+  api 'io.projectreactor:reactor-core:3.8.1'
+
+  testImplementation 'org.junit.jupiter:junit-jupiter:5.14.1'
+  testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+  testRuntimeOnly 'ch.qos.logback:logback-classic:1.5.23'
+}
+
+publishing {
+  publications {
+    mavenJava(MavenPublication) {
+      from components.java
+
+      pom {
+        name = 'FluxHandle'
+        description = project.description
+        url = 'https://github.com/agent-hanju/fluxhandle'
+        inceptionYear = '2026'
+
+        licenses {
+          license {
+            name = 'MIT License'
+            url = 'https://opensource.org/licenses/MIT'
+            distribution = 'repo'
+          }
+        }
+
+        developers {
+          developer {
+            id = 'agent-hanju'
+            name = 'hanju'
+            email = 'agent.hanju@gmail.com'
+          }
+        }
+
+        scm {
+          url = 'https://github.com/agent-hanju/fluxhandle'
+          connection = 'scm:git:git://github.com/agent-hanju/fluxhandle.git'
+          developerConnection = 'scm:git:ssh://git@github.com/agent-hanju/fluxhandle.git'
+        }
+
+        issueManagement {
+          system = 'GitHub Issues'
+          url = 'https://github.com/agent-hanju/fluxhandle/issues'
+        }
+      }
+    }
+  }
+}
