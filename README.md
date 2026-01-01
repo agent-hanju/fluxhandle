@@ -9,6 +9,7 @@ A lightweight wrapper for Project Reactor Flux that bridges reactive streams to 
 - Synchronous result retrieval with `get()` or `get(timeout, unit)`
 - Cancellation support with `cancel()`
 - Exception handling with `FluxHandleException` hierarchy
+- **DirectHandle** for manual emission without Flux dependency
 
 ## Installation
 
@@ -26,7 +27,7 @@ Add the dependency:
 
 ```groovy
 dependencies {
-    implementation 'com.github.agent-hanju:fluxhandle:0.1.0'
+    implementation 'com.github.agent-hanju:fluxhandle:0.2.0'
 }
 ```
 
@@ -66,9 +67,31 @@ handle.cancel();
 
 ## Components
 
+### Handle<T, R>
+
+Common interface for all handle implementations, providing:
+
+- `get()` / `get(timeout, unit)` - Block and retrieve the built result
+- `cancel()` - Cancel the streaming
+- `isCancelled()` / `isError()` / `getError()` - Check state
+
 ### FluxHandle<T, R>
 
-The main class that wraps a `Flux<T>` and manages the streaming lifecycle, building a result of type `R`.
+Wraps a `Flux<T>` and manages the streaming lifecycle, building a result of type `R`. Subscribes immediately on construction.
+
+### DirectHandle<T, R>
+
+Allows direct emission of items without a `Flux` source. Useful for callback-based or event-driven scenarios:
+
+```java
+DirectHandle<String, String> handle = new DirectHandle<>(assembler, listener);
+
+handle.onNext("first");
+handle.onNext("second");
+handle.onComplete();
+
+String result = handle.get(); // "first" + "second"
+```
 
 ### FluxAssembler<T, R>
 

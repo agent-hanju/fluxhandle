@@ -11,51 +11,42 @@ import org.slf4j.LoggerFactory;
 import me.hanju.fluxhandle.exception.FluxAssemblerException;
 import me.hanju.fluxhandle.exception.FluxHandleException;
 import me.hanju.fluxhandle.exception.FluxListenerException;
-import reactor.core.Disposable;
-import reactor.core.publisher.Flux;
-import reactor.core.scheduler.Schedulers;
 
 /**
- * A wrapper for Project Reactor {@link Flux} that bridges reactive streams to
- * listener-based callbacks with incremental result building.
+ * A handle that allows direct emission of items while using the same
+ * {@link FluxListener} pattern as {@link FluxHandle}.
  *
  * <p>
- * FluxHandle subscribes to a {@link Flux} and processes each emitted item by:
- * <ul>
- * <li>Applying the delta to the {@link FluxAssembler} for incremental result
- * construction</li>
- * <li>Notifying the {@link FluxListener} of streaming events</li>
- * </ul>
- *
- * <p>
- * The final result can be retrieved synchronously via {@link #get()} or
- * {@link #get(long, TimeUnit)} after the stream completes.
+ * Unlike {@link FluxHandle} which subscribes to a
+ * {@link reactor.core.publisher.Flux},
+ * DirectHandle allows external code to directly emit items, errors, and
+ * completion signals through public {@link #onNext(Object)},
+ * {@link #onError(Throwable)}, and {@link #onComplete()} methods.
  *
  * <p>
  * Example usage:
  *
  * <pre>{@code
- * Flux<String> flux = ...;
- * FluxHandle<String, String> handle = new FluxHandle<>(flux, myAssembler, myListener);
+ * FluxListener<String> listener = item -> System.out.println("received: " + item);
+ * DirectHandle<String, String> handle = new DirectHandle<>(assembler, listener);
  *
- * // Wait for completion and get the result
+ * handle.onNext("first");
+ * handle.onNext("second");
+ * handle.onComplete();
+ *
  * String result = handle.get();
- *
- * // Or cancel the stream
- * handle.cancel();
  * }</pre>
  *
- * @param <T> the type of elements emitted by the Flux
+ * @param <T> the type of elements being streamed
  * @param <R> the type of the built result
- * @see FluxAssembler
+ * @see Handle
+ * @see FluxHandle
  * @see FluxListener
  */
-public class FluxHandle<T, R> implements Handle<T, R> {
-  private static final Logger log = LoggerFactory.getLogger(FluxHandle.class);
+public class DirectHandle<T, R> implements Handle<T, R> {
+  private static final Logger log = LoggerFactory.getLogger(DirectHandle.class);
 
   private final FluxListener<T> listener;
-  private final Disposable disposable;
-
   private final FluxAssembler<T, R> assembler;
   private final CompletableFuture<R> future = new CompletableFuture<>();
 
@@ -64,38 +55,34 @@ public class FluxHandle<T, R> implements Handle<T, R> {
   private boolean cancelled = false;
 
   /**
-   * Creates a new FluxHandle that subscribes to the given Flux.
+   * Creates a new DirectHandle with the given assembler and listener.
    *
-   * <p>
-   * The subscription is performed immediately on a bounded elastic scheduler.
-   *
-   * @param flux      the reactive stream to subscribe to
    * @param assembler the assembler for incremental result construction
    * @param listener  the listener to receive streaming events
    * @throws IllegalArgumentException if any parameter is null
    */
-  public FluxHandle(
-      final Flux<T> flux,
+  public DirectHandle(
       final FluxAssembler<T, R> assembler,
       final FluxListener<T> listener) {
-    if (flux == null) {
-      throw new IllegalArgumentException("flux cannot be null");
-    } else if (assembler == null) {
+    if (assembler == null) {
       throw new IllegalArgumentException("assembler cannot be null");
     } else if (listener == null) {
       throw new IllegalArgumentException("listener cannot be null");
-    } else {
-      this.assembler = assembler;
-      this.listener = listener;
-      this.disposable = flux.subscribeOn(Schedulers.boundedElastic())
-          .subscribe(
-              this::onNext,
-              this::onError,
-              this::onComplete);
     }
+    this.assembler = assembler;
+    this.listener = listener;
   }
 
-  private synchronized void onNext(final T item) {
+  /**
+   * Emits an item to the handle.
+   *
+   * <p>
+   * The item will be applied to the assembler and the listener's
+   * {@link FluxListener#onNext(Object)} will be called.
+   *
+   * @param item the item to emit
+   */
+  public synchronized void onNext(final T item) {
     if (this.completed) {
       log.warn("emitting next failed. already completed.");
     } else {
@@ -115,7 +102,16 @@ public class FluxHandle<T, R> implements Handle<T, R> {
     }
   }
 
-  private synchronized void onError(final Throwable e) {
+  /**
+   * Emits an error to the handle.
+   *
+   * <p>
+   * The listener's {@link FluxListener#onError(Throwable)} will be called and
+   * the handle will be marked as completed.
+   *
+   * @param e the error to emit
+   */
+  public synchronized void onError(final Throwable e) {
     log.info("received an error", e);
     if (this.completed) {
       log.warn("emitting error failed. already completed.");
@@ -138,7 +134,14 @@ public class FluxHandle<T, R> implements Handle<T, R> {
     }
   }
 
-  private synchronized void onComplete() {
+  /**
+   * Completes the handle successfully.
+   *
+   * <p>
+   * The listener's {@link FluxListener#onComplete()} will be called and
+   * the result will be available via {@link #get()}.
+   */
+  public synchronized void onComplete() {
     if (this.completed) {
       log.warn("emitting complete failed. already completed.");
     } else {
@@ -159,23 +162,13 @@ public class FluxHandle<T, R> implements Handle<T, R> {
       this.completed = true;
       log.info("completed");
     }
-
   }
 
-  /**
-   * Cancels the streaming and notifies the listener.
-   *
-   * <p>
-   * If already completed, this method has no effect.
-   * The current accumulated result from the assembler will still be available via
-   * {@link #get()}.
-   */
   @Override
   public synchronized void cancel() {
     if (this.completed) {
       log.warn("cancel failed. already completed.");
     } else {
-      this.disposable.dispose();
       final R result;
       try {
         result = this.assembler.build();
@@ -194,45 +187,23 @@ public class FluxHandle<T, R> implements Handle<T, R> {
       this.future.complete(result);
       log.info("cancelled");
     }
-
   }
 
-  /**
-   * Returns whether this handle was cancelled.
-   *
-   * @return {@code true} if cancelled, {@code false} otherwise
-   */
   @Override
   public boolean isCancelled() {
     return this.cancelled;
   }
 
-  /**
-   * Returns whether an error occurred during streaming.
-   *
-   * @return {@code true} if an error occurred, {@code false} otherwise
-   */
   @Override
   public boolean isError() {
     return this.error != null;
   }
 
-  /**
-   * Returns the error that occurred during streaming, if any.
-   *
-   * @return the error, or {@code null} if no error occurred
-   */
   @Override
   public Throwable getError() {
     return this.error;
   }
 
-  /**
-   * Blocks until the stream completes and returns the built result.
-   *
-   * @return the result built by the {@link FluxAssembler}
-   * @throws FluxHandleException if an error occurred during streaming
-   */
   @Override
   public R get() {
     try {
@@ -249,17 +220,6 @@ public class FluxHandle<T, R> implements Handle<T, R> {
     }
   }
 
-  /**
-   * Blocks until the stream completes or the timeout expires, then returns the
-   * built result.
-   *
-   * @param timeout the maximum time to wait
-   * @param unit    the time unit of the timeout argument
-   * @return the result built by the {@link FluxAssembler}
-   * @throws TimeoutException         if the wait timed out
-   * @throws IllegalArgumentException if unit is null
-   * @throws FluxHandleException      if an error occurred during streaming
-   */
   @Override
   public R get(final long timeout, final TimeUnit unit) throws TimeoutException {
     if (unit == null) {

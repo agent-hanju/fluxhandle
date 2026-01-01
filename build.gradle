@@ -4,7 +4,7 @@ plugins {
 }
 
 group = 'me.hanju.fluxhandle'
-version = '0.1.0'
+version = '0.2.0'
 description = 'A lightweight wrapper for Project Reactor Flux that bridges reactive streams to listener-based callbacks with incremental result building'
 
 java {
