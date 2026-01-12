@@ -38,6 +38,8 @@ dependencies {
   testImplementation 'org.junit.jupiter:junit-jupiter:5.14.1'
   testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
   testRuntimeOnly 'ch.qos.logback:logback-classic:1.5.23'
+  testCompileOnly 'org.projectlombok:lombok:1.18.36'
+  testAnnotationProcessor 'org.projectlombok:lombok:1.18.36'
 }
 
 publishing {
