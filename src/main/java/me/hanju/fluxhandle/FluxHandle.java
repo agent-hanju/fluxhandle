@@ -24,9 +24,9 @@ import reactor.core.scheduler.Schedulers;
  * <p>
  * FluxHandle subscribes to a {@link Flux} of type {@code T} and processes each emitted item by:
  * <ul>
- * <li>Notifying the {@link FluxListener} of the original delta</li>
  * <li>Transforming the delta via {@link DeltaMapper} (0:N mapping)</li>
  * <li>Merging transformed deltas via {@link DeltaMerger}</li>
+ * <li>Notifying the {@link FluxListener} of each transformed delta</li>
  * </ul>
  *
  * <p>
@@ -49,7 +49,7 @@ import reactor.core.scheduler.Schedulers;
  *     flux,
  *     mapper,
  *     MyDelta.class,
- *     chunk -> System.out.println("Received: " + chunk)
+ *     delta -> System.out.println("Transformed delta: " + delta)
  * );
  *
  * MyDelta result = handle.get();
@@ -65,7 +65,7 @@ import reactor.core.scheduler.Schedulers;
 public class FluxHandle<T, R> implements IFluxHandle<T, R> {
   private static final Logger log = LoggerFactory.getLogger(FluxHandle.class);
 
-  private final FluxListener<T> listener;
+  private final FluxListener<R> listener;
   private final Disposable disposable;
   private final DeltaMapper<T, R> mapper;
   private final DeltaMerger<R> merger;
@@ -91,7 +91,7 @@ public class FluxHandle<T, R> implements IFluxHandle<T, R> {
       final Flux<T> flux,
       final DeltaMapper<T, R> mapper,
       final Class<R> resultType,
-      final FluxListener<T> listener) {
+      final FluxListener<R> listener) {
     if (flux == null) {
       throw new IllegalArgumentException("flux cannot be null");
     } else if (mapper == null) {
@@ -118,15 +118,7 @@ public class FluxHandle<T, R> implements IFluxHandle<T, R> {
       return;
     }
 
-    // 1. Notify listener with original delta
-    try {
-      this.listener.onNext(item);
-    } catch (final Exception ex) {
-      this.onError(new FluxListenerException("listener failed while emit next", ex));
-      return;
-    }
-
-    // 2. Transform delta (0:N mapping)
+    // 1. Transform delta (0:N mapping)
     final List<R> mappedDeltas;
     try {
       mappedDeltas = this.mapper.map(item);
@@ -135,12 +127,19 @@ public class FluxHandle<T, R> implements IFluxHandle<T, R> {
       return;
     }
 
-    // 3. Merge each transformed delta
+    // 2. Merge each transformed delta and notify listener
     for (final R delta : mappedDeltas) {
       try {
         this.merger.applyDelta(delta);
       } catch (final Exception e) {
         this.onError(new FluxHandleException("delta merge failed", e));
+        return;
+      }
+
+      try {
+        this.listener.onNext(delta);
+      } catch (final Exception ex) {
+        this.onError(new FluxListenerException("listener failed while emit next", ex));
         return;
       }
     }

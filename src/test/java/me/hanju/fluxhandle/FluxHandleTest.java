@@ -68,14 +68,14 @@ class FluxHandleTest {
     }
   }
 
-  public static class RecordingListener implements FluxListener<InputChunk> {
-    final List<InputChunk> items = new ArrayList<>();
+  public static class RecordingListener<T> implements FluxListener<T> {
+    final List<T> items = new ArrayList<>();
     final AtomicBoolean completed = new AtomicBoolean(false);
     final AtomicBoolean cancelled = new AtomicBoolean(false);
     final AtomicReference<Throwable> error = new AtomicReference<>();
 
     @Override
-    public void onNext(InputChunk item) {
+    public void onNext(T item) {
       items.add(item);
     }
 
@@ -120,7 +120,7 @@ class FluxHandleTest {
         new InputChunk("b", 1),
         new InputChunk("c", 2)
     );
-    RecordingListener listener = new RecordingListener();
+    RecordingListener<OutputDelta> listener = new RecordingListener<>();
 
     FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
         flux, SIMPLE_MAPPER, OutputDelta.class, listener);
@@ -150,14 +150,14 @@ class FluxHandleTest {
         new InputChunk("c", 2),  // filtered
         new InputChunk("d", 3)   // kept
     );
-    RecordingListener listener = new RecordingListener();
+    RecordingListener<OutputDelta> listener = new RecordingListener<>();
 
     FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
         flux, filteringMapper, OutputDelta.class, listener);
     OutputDelta result = handle.get();
 
     assertEquals("bd", result.getText());
-    assertEquals(4, listener.items.size());  // Listener receives all original chunks
+    assertEquals(2, listener.items.size());  // Listener receives only transformed deltas (filtered)
   }
 
   @Test
@@ -213,7 +213,7 @@ class FluxHandleTest {
         .map(i -> new InputChunk("item" + i, i.intValue()))
         .doOnCancel(latch::countDown);
 
-    RecordingListener listener = new RecordingListener();
+    RecordingListener<OutputDelta> listener = new RecordingListener<>();
     FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
         flux, SIMPLE_MAPPER, OutputDelta.class, listener);
 
@@ -228,7 +228,7 @@ class FluxHandleTest {
 
   @Test
   void cancel_afterCompleteShouldHaveNoEffect() {
-    RecordingListener listener = new RecordingListener();
+    RecordingListener<OutputDelta> listener = new RecordingListener<>();
     FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
         Flux.just(new InputChunk("a", 0)), SIMPLE_MAPPER, OutputDelta.class, listener);
 
@@ -245,7 +245,7 @@ class FluxHandleTest {
         Flux.just(new InputChunk("Hello", 0), new InputChunk(" ", 1)),
         Flux.error(new RuntimeException("Network error"))
     );
-    RecordingListener listener = new RecordingListener();
+    RecordingListener<OutputDelta> listener = new RecordingListener<>();
 
     FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
         flux, SIMPLE_MAPPER, OutputDelta.class, listener);
@@ -260,7 +260,7 @@ class FluxHandleTest {
 
   @Test
   void listenerException_shouldWrapInFluxListenerException() {
-    FluxListener<InputChunk> failingListener = item -> {
+    FluxListener<OutputDelta> failingListener = item -> {
       throw new RuntimeException("listener failed");
     };
 

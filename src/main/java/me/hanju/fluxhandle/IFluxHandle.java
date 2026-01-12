@@ -13,7 +13,7 @@ import me.hanju.fluxhandle.exception.FluxHandleException;
  * and merging to construct a result of type {@code R}.
  *
  * <p>
- * The {@link FluxListener} receives original deltas of type {@code T} before transformation.
+ * The {@link FluxListener} receives transformed deltas of type {@code R} after transformation.
  *
  * @param <T> the type of input elements being streamed
  * @param <R> the type of the built result
