@@ -7,7 +7,6 @@
  * which is an unchecked exception.
  *
  * @see me.hanju.fluxhandle.exception.FluxHandleException
- * @see me.hanju.fluxhandle.exception.FluxAssemblerException
  * @see me.hanju.fluxhandle.exception.FluxListenerException
  */
 package me.hanju.fluxhandle.exception;

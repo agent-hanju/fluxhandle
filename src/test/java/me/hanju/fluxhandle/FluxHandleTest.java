@@ -13,34 +13,44 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
-import me.hanju.fluxhandle.exception.FluxAssemblerException;
+import me.hanju.fluxhandle.exception.FluxHandleException;
 import me.hanju.fluxhandle.exception.FluxListenerException;
 import reactor.core.publisher.Flux;
 
 class FluxHandleTest {
 
-  static class StringBuilderAdapter implements FluxAssembler<String, String> {
-    private final StringBuilder sb = new StringBuilder();
+  /**
+   * Test class with custom merge method for string concatenation.
+   */
+  public static class StringChunk {
+    private String content;
 
-    @Override
-    public void applyDelta(String delta) {
-      sb.append(delta);
+    public StringChunk() {
     }
 
-    @Override
-    public String build() {
-      return sb.toString();
+    public StringChunk(String content) {
+      this.content = content;
+    }
+
+    public String getContent() {
+      return content;
+    }
+
+    public StringChunk merge(StringChunk delta) {
+      String newContent = (this.content == null ? "" : this.content)
+          + (delta.content == null ? "" : delta.content);
+      return new StringChunk(newContent);
     }
   }
 
-  static class RecordingListener implements FluxListener<String> {
-    final List<String> items = new ArrayList<>();
+  public static class RecordingListener implements FluxListener<StringChunk> {
+    final List<StringChunk> items = new ArrayList<>();
     final AtomicBoolean completed = new AtomicBoolean(false);
     final AtomicBoolean cancelled = new AtomicBoolean(false);
     final AtomicReference<Throwable> error = new AtomicReference<>();
 
     @Override
-    public void onNext(String item) {
+    public void onNext(StringChunk item) {
       items.add(item);
     }
 
@@ -63,23 +73,27 @@ class FluxHandleTest {
   @Test
   void constructor_shouldThrowOnNullArguments() {
     assertThrows(IllegalArgumentException.class, () ->
-        new FluxHandle<>(null, new StringBuilderAdapter(), item -> {}));
+        new FluxHandle<>(null, StringChunk.class, item -> {}));
     assertThrows(IllegalArgumentException.class, () ->
-        new FluxHandle<>(Flux.just("a"), null, item -> {}));
+        new FluxHandle<>(Flux.just(new StringChunk("a")), null, item -> {}));
     assertThrows(IllegalArgumentException.class, () ->
-        new FluxHandle<>(Flux.just("a"), new StringBuilderAdapter(), null));
+        new FluxHandle<>(Flux.just(new StringChunk("a")), StringChunk.class, null));
   }
 
   @Test
   void get_shouldReturnBuiltResult() {
-    Flux<String> flux = Flux.just("a", "b", "c");
+    Flux<StringChunk> flux = Flux.just(
+        new StringChunk("a"),
+        new StringChunk("b"),
+        new StringChunk("c")
+    );
     RecordingListener listener = new RecordingListener();
 
-    FluxHandle<String, String> handle = new FluxHandle<>(flux, new StringBuilderAdapter(), listener);
-    String result = handle.get();
+    FluxHandle<StringChunk> handle = new FluxHandle<>(flux, StringChunk.class, listener);
+    StringChunk result = handle.get();
 
-    assertEquals("abc", result);
-    assertEquals(List.of("a", "b", "c"), listener.items);
+    assertEquals("abc", result.getContent());
+    assertEquals(3, listener.items.size());
     assertTrue(listener.completed.get());
     assertFalse(handle.isCancelled());
     assertFalse(handle.isError());
@@ -88,33 +102,34 @@ class FluxHandleTest {
 
   @Test
   void getWithTimeout_shouldReturnBuiltResult() throws TimeoutException {
-    Flux<String> flux = Flux.just("x", "y");
-    FluxHandle<String, String> handle = new FluxHandle<>(flux, new StringBuilderAdapter(), item -> {});
+    Flux<StringChunk> flux = Flux.just(new StringChunk("x"), new StringChunk("y"));
+    FluxHandle<StringChunk> handle = new FluxHandle<>(flux, StringChunk.class, item -> {});
 
-    assertEquals("xy", handle.get(5, TimeUnit.SECONDS));
+    assertEquals("xy", handle.get(5, TimeUnit.SECONDS).getContent());
   }
 
   @Test
   void getWithTimeout_shouldThrowOnNullUnit() {
-    FluxHandle<String, String> handle = new FluxHandle<>(Flux.just("a"), new StringBuilderAdapter(), item -> {});
+    FluxHandle<StringChunk> handle = new FluxHandle<>(
+        Flux.just(new StringChunk("a")), StringChunk.class, item -> {});
     assertThrows(IllegalArgumentException.class, () -> handle.get(1, null));
   }
 
   @Test
   void getWithTimeout_shouldThrowTimeoutException() {
-    FluxHandle<String, String> handle = new FluxHandle<>(Flux.never(), new StringBuilderAdapter(), item -> {});
+    FluxHandle<StringChunk> handle = new FluxHandle<>(Flux.never(), StringChunk.class, item -> {});
     assertThrows(TimeoutException.class, () -> handle.get(100, TimeUnit.MILLISECONDS));
   }
 
   @Test
   void cancel_shouldStopStreamAndReturnPartialResult() throws Exception {
     CountDownLatch latch = new CountDownLatch(1);
-    Flux<String> flux = Flux.interval(Duration.ofMillis(50))
-        .map(i -> "item" + i)
+    Flux<StringChunk> flux = Flux.interval(Duration.ofMillis(50))
+        .map(i -> new StringChunk("item" + i))
         .doOnCancel(latch::countDown);
 
     RecordingListener listener = new RecordingListener();
-    FluxHandle<String, String> handle = new FluxHandle<>(flux, new StringBuilderAdapter(), listener);
+    FluxHandle<StringChunk> handle = new FluxHandle<>(flux, StringChunk.class, listener);
 
     Thread.sleep(120);
     handle.cancel();
@@ -128,7 +143,8 @@ class FluxHandleTest {
   @Test
   void cancel_afterCompleteShouldHaveNoEffect() {
     RecordingListener listener = new RecordingListener();
-    FluxHandle<String, String> handle = new FluxHandle<>(Flux.just("a"), new StringBuilderAdapter(), listener);
+    FluxHandle<StringChunk> handle = new FluxHandle<>(
+        Flux.just(new StringChunk("a")), StringChunk.class, listener);
 
     handle.get();
     handle.cancel();
@@ -139,16 +155,16 @@ class FluxHandleTest {
 
   @Test
   void error_shouldReturnPartialResultAndSetErrorState() {
-    Flux<String> flux = Flux.concat(
-        Flux.just("Hello", " "),
+    Flux<StringChunk> flux = Flux.concat(
+        Flux.just(new StringChunk("Hello"), new StringChunk(" ")),
         Flux.error(new RuntimeException("Network error"))
     );
     RecordingListener listener = new RecordingListener();
 
-    FluxHandle<String, String> handle = new FluxHandle<>(flux, new StringBuilderAdapter(), listener);
-    String result = handle.get();
+    FluxHandle<StringChunk> handle = new FluxHandle<>(flux, StringChunk.class, listener);
+    StringChunk result = handle.get();
 
-    assertEquals("Hello ", result);
+    assertEquals("Hello ", result.getContent());
     assertTrue(handle.isError());
     assertFalse(handle.isCancelled());
     assertNotNull(handle.getError());
@@ -156,37 +172,50 @@ class FluxHandleTest {
   }
 
   @Test
-  void assemblerException_shouldWrapInFluxAssemblerException() {
-    FluxAssembler<String, String> failingAssembler = new FluxAssembler<>() {
-      @Override
-      public void applyDelta(String delta) {
-        throw new RuntimeException("applyDelta failed");
-      }
-
-      @Override
-      public String build() {
-        return "";
-      }
-    };
-
-    FluxHandle<String, String> handle = new FluxHandle<>(Flux.just("a"), failingAssembler, item -> {});
-    handle.get();
-
-    assertTrue(handle.isError());
-    assertInstanceOf(FluxAssemblerException.class, handle.getError());
-  }
-
-  @Test
   void listenerException_shouldWrapInFluxListenerException() {
-    FluxListener<String> failingListener = item -> {
+    FluxListener<StringChunk> failingListener = item -> {
       throw new RuntimeException("listener failed");
     };
 
-    FluxHandle<String, String> handle = new FluxHandle<>(Flux.just("a"), new StringBuilderAdapter(), failingListener);
+    FluxHandle<StringChunk> handle = new FluxHandle<>(
+        Flux.just(new StringChunk("a")), StringChunk.class, failingListener);
     handle.get();
 
     assertTrue(handle.isError());
     assertInstanceOf(FluxListenerException.class, handle.getError());
   }
 
+  /**
+   * Test class that throws exception in merge method.
+   */
+  public static class FailingChunk {
+    private String content;
+
+    public FailingChunk() {
+    }
+
+    public FailingChunk(String content) {
+      this.content = content;
+    }
+
+    public String getContent() {
+      return content;
+    }
+
+    public FailingChunk merge(FailingChunk delta) {
+      throw new RuntimeException("merge failed");
+    }
+  }
+
+  @Test
+  void mergeException_shouldWrapInFluxHandleException() {
+    FluxHandle<FailingChunk> handle = new FluxHandle<>(
+        Flux.just(new FailingChunk("a"), new FailingChunk("b")),
+        FailingChunk.class,
+        item -> {});
+    handle.get();
+
+    assertTrue(handle.isError());
+    assertInstanceOf(FluxHandleException.class, handle.getError());
+  }
 }

@@ -10,23 +10,21 @@ import me.hanju.fluxhandle.exception.FluxHandleException;
  * result.
  *
  * <p>
- * Implementations process streaming items through a {@link FluxAssembler} for
+ * Implementations process streaming items through delta merging for
  * incremental result construction and notify {@link FluxListener} of events.
  *
- * @param <T> the type of elements being streamed
- * @param <R> the type of the built result
+ * @param <T> the type of elements being streamed and the built result
  * @see FluxHandle
  * @see DirectHandle
  */
-public interface Handle<T, R> {
+public interface Handle<T> {
 
   /**
    * Cancels the streaming and notifies the listener.
    *
    * <p>
    * If already completed, this method has no effect.
-   * The current accumulated result from the assembler will still be available
-   * via {@link #get()}.
+   * The current accumulated result will still be available via {@link #get()}.
    */
   void cancel();
 
@@ -54,10 +52,10 @@ public interface Handle<T, R> {
   /**
    * Blocks until the stream completes and returns the built result.
    *
-   * @return the result built by the {@link FluxAssembler}
+   * @return the merged result
    * @throws FluxHandleException if an error occurred during streaming
    */
-  R get();
+  T get();
 
   /**
    * Blocks until the stream completes or the timeout expires, then returns the
@@ -65,10 +63,10 @@ public interface Handle<T, R> {
    *
    * @param timeout the maximum time to wait
    * @param unit    the time unit of the timeout argument
-   * @return the result built by the {@link FluxAssembler}
+   * @return the merged result
    * @throws TimeoutException         if the wait timed out
    * @throws IllegalArgumentException if unit is null
    * @throws FluxHandleException      if an error occurred during streaming
    */
-  R get(long timeout, TimeUnit unit) throws TimeoutException;
+  T get(long timeout, TimeUnit unit) throws TimeoutException;
 }

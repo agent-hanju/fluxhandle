@@ -20,33 +20,43 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
-import me.hanju.fluxhandle.exception.FluxAssemblerException;
+import me.hanju.fluxhandle.exception.FluxHandleException;
 import me.hanju.fluxhandle.exception.FluxListenerException;
 
 class DirectHandleTest {
 
-  static class StringBuilderAdapter implements FluxAssembler<String, String> {
-    private final StringBuilder sb = new StringBuilder();
+  /**
+   * Test class with custom merge method for string concatenation.
+   */
+  public static class StringChunk {
+    private String content;
 
-    @Override
-    public void applyDelta(String delta) {
-      sb.append(delta);
+    public StringChunk() {
     }
 
-    @Override
-    public String build() {
-      return sb.toString();
+    public StringChunk(String content) {
+      this.content = content;
+    }
+
+    public String getContent() {
+      return content;
+    }
+
+    public StringChunk merge(StringChunk delta) {
+      String newContent = (this.content == null ? "" : this.content)
+          + (delta.content == null ? "" : delta.content);
+      return new StringChunk(newContent);
     }
   }
 
-  static class RecordingListener implements FluxListener<String> {
-    final List<String> items = new ArrayList<>();
+  public static class RecordingListener implements FluxListener<StringChunk> {
+    final List<StringChunk> items = new ArrayList<>();
     final AtomicBoolean completed = new AtomicBoolean(false);
     final AtomicBoolean cancelled = new AtomicBoolean(false);
     final AtomicReference<Throwable> error = new AtomicReference<>();
 
     @Override
-    public void onNext(String item) {
+    public void onNext(StringChunk item) {
       items.add(item);
     }
 
@@ -68,25 +78,26 @@ class DirectHandleTest {
 
   @Test
   void constructor_shouldThrowOnNullArguments() {
-    assertThrows(IllegalArgumentException.class, () -> new DirectHandle<>(null, item -> {
-    }));
-    assertThrows(IllegalArgumentException.class, () -> new DirectHandle<>(new StringBuilderAdapter(), null));
+    assertThrows(IllegalArgumentException.class, () ->
+        new DirectHandle<>(null, item -> {}));
+    assertThrows(IllegalArgumentException.class, () ->
+        new DirectHandle<>(StringChunk.class, null));
   }
 
   @Test
   void emitAndComplete_shouldReturnBuiltResult() {
     RecordingListener listener = new RecordingListener();
-    DirectHandle<String, String> handle = new DirectHandle<>(new StringBuilderAdapter(), listener);
+    DirectHandle<StringChunk> handle = new DirectHandle<>(StringChunk.class, listener);
 
-    handle.onNext("a");
-    handle.onNext("b");
-    handle.onNext("c");
+    handle.onNext(new StringChunk("a"));
+    handle.onNext(new StringChunk("b"));
+    handle.onNext(new StringChunk("c"));
     handle.onComplete();
 
-    String result = handle.get();
+    StringChunk result = handle.get();
 
-    assertEquals("abc", result);
-    assertEquals(List.of("a", "b", "c"), listener.items);
+    assertEquals("abc", result.getContent());
+    assertEquals(3, listener.items.size());
     assertTrue(listener.completed.get());
     assertFalse(handle.isCancelled());
     assertFalse(handle.isError());
@@ -95,43 +106,40 @@ class DirectHandleTest {
 
   @Test
   void getWithTimeout_shouldReturnBuiltResult() throws TimeoutException {
-    DirectHandle<String, String> handle = new DirectHandle<>(new StringBuilderAdapter(), item -> {
-    });
+    DirectHandle<StringChunk> handle = new DirectHandle<>(StringChunk.class, item -> {});
 
-    handle.onNext("x");
-    handle.onNext("y");
+    handle.onNext(new StringChunk("x"));
+    handle.onNext(new StringChunk("y"));
     handle.onComplete();
 
-    assertEquals("xy", handle.get(5, TimeUnit.SECONDS));
+    assertEquals("xy", handle.get(5, TimeUnit.SECONDS).getContent());
   }
 
   @Test
   void getWithTimeout_shouldThrowOnNullUnit() {
-    DirectHandle<String, String> handle = new DirectHandle<>(new StringBuilderAdapter(), item -> {
-    });
+    DirectHandle<StringChunk> handle = new DirectHandle<>(StringChunk.class, item -> {});
     handle.onComplete();
     assertThrows(IllegalArgumentException.class, () -> handle.get(1, null));
   }
 
   @Test
   void getWithTimeout_shouldThrowTimeoutException() {
-    DirectHandle<String, String> handle = new DirectHandle<>(new StringBuilderAdapter(), item -> {
-    });
+    DirectHandle<StringChunk> handle = new DirectHandle<>(StringChunk.class, item -> {});
     assertThrows(TimeoutException.class, () -> handle.get(100, TimeUnit.MILLISECONDS));
   }
 
   @Test
   void cancel_shouldReturnPartialResult() {
     RecordingListener listener = new RecordingListener();
-    DirectHandle<String, String> handle = new DirectHandle<>(new StringBuilderAdapter(), listener);
+    DirectHandle<StringChunk> handle = new DirectHandle<>(StringChunk.class, listener);
 
-    handle.onNext("Hello");
-    handle.onNext(" ");
+    handle.onNext(new StringChunk("Hello"));
+    handle.onNext(new StringChunk(" "));
     handle.cancel();
 
-    String result = handle.get();
+    StringChunk result = handle.get();
 
-    assertEquals("Hello ", result);
+    assertEquals("Hello ", result.getContent());
     assertTrue(handle.isCancelled());
     assertTrue(listener.cancelled.get());
     assertFalse(listener.completed.get());
@@ -140,9 +148,9 @@ class DirectHandleTest {
   @Test
   void cancel_afterCompleteShouldHaveNoEffect() {
     RecordingListener listener = new RecordingListener();
-    DirectHandle<String, String> handle = new DirectHandle<>(new StringBuilderAdapter(), listener);
+    DirectHandle<StringChunk> handle = new DirectHandle<>(StringChunk.class, listener);
 
-    handle.onNext("a");
+    handle.onNext(new StringChunk("a"));
     handle.onComplete();
     handle.cancel();
 
@@ -154,52 +162,62 @@ class DirectHandleTest {
   @Test
   void onError_shouldReturnPartialResultAndSetErrorState() {
     RecordingListener listener = new RecordingListener();
-    DirectHandle<String, String> handle = new DirectHandle<>(new StringBuilderAdapter(), listener);
+    DirectHandle<StringChunk> handle = new DirectHandle<>(StringChunk.class, listener);
 
-    handle.onNext("Hello");
-    handle.onNext(" ");
+    handle.onNext(new StringChunk("Hello"));
+    handle.onNext(new StringChunk(" "));
     handle.onError(new RuntimeException("Network error"));
 
-    String result = handle.get();
+    StringChunk result = handle.get();
 
-    assertEquals("Hello ", result);
+    assertEquals("Hello ", result.getContent());
     assertTrue(handle.isError());
     assertFalse(handle.isCancelled());
     assertNotNull(handle.getError());
     assertNotNull(listener.error.get());
   }
 
+  /**
+   * Test class that throws exception in merge method.
+   */
+  public static class FailingChunk {
+    private String content;
+
+    public FailingChunk() {
+    }
+
+    public FailingChunk(String content) {
+      this.content = content;
+    }
+
+    public String getContent() {
+      return content;
+    }
+
+    public FailingChunk merge(FailingChunk delta) {
+      throw new RuntimeException("merge failed");
+    }
+  }
+
   @Test
-  void assemblerException_shouldWrapInFluxAssemblerException() {
-    FluxAssembler<String, String> failingAssembler = new FluxAssembler<>() {
-      @Override
-      public void applyDelta(String delta) {
-        throw new RuntimeException("applyDelta failed");
-      }
-
-      @Override
-      public String build() {
-        return "";
-      }
-    };
-
-    DirectHandle<String, String> handle = new DirectHandle<>(failingAssembler, item -> {
-    });
-    handle.onNext("a");
+  void mergeException_shouldWrapInFluxHandleException() {
+    DirectHandle<FailingChunk> handle = new DirectHandle<>(FailingChunk.class, item -> {});
+    handle.onNext(new FailingChunk("a"));
+    handle.onNext(new FailingChunk("b"));
     handle.onComplete();
 
     assertTrue(handle.isError());
-    assertInstanceOf(FluxAssemblerException.class, handle.getError());
+    assertInstanceOf(FluxHandleException.class, handle.getError());
   }
 
   @Test
   void listenerException_shouldWrapInFluxListenerException() {
-    FluxListener<String> failingListener = item -> {
+    FluxListener<StringChunk> failingListener = item -> {
       throw new RuntimeException("listener failed");
     };
 
-    DirectHandle<String, String> handle = new DirectHandle<>(new StringBuilderAdapter(), failingListener);
-    handle.onNext("a");
+    DirectHandle<StringChunk> handle = new DirectHandle<>(StringChunk.class, failingListener);
+    handle.onNext(new StringChunk("a"));
     handle.onComplete();
 
     assertTrue(handle.isError());
@@ -209,25 +227,24 @@ class DirectHandleTest {
   @Test
   void onNextAfterComplete_shouldBeIgnored() {
     RecordingListener listener = new RecordingListener();
-    DirectHandle<String, String> handle = new DirectHandle<>(new StringBuilderAdapter(), listener);
+    DirectHandle<StringChunk> handle = new DirectHandle<>(StringChunk.class, listener);
 
-    handle.onNext("a");
+    handle.onNext(new StringChunk("a"));
     handle.onComplete();
-    handle.onNext("b");
+    handle.onNext(new StringChunk("b"));
 
-    assertEquals("a", handle.get());
-    assertEquals(List.of("a"), listener.items);
+    assertEquals("a", handle.get().getContent());
+    assertEquals(1, listener.items.size());
   }
 
   @Test
   void handleInterface_shouldBeCompatible() {
-    Handle<String, String> handle = new DirectHandle<>(new StringBuilderAdapter(), item -> {
-    });
+    Handle<StringChunk> handle = new DirectHandle<>(StringChunk.class, item -> {});
 
-    ((DirectHandle<String, String>) handle).onNext("test");
-    ((DirectHandle<String, String>) handle).onComplete();
+    ((DirectHandle<StringChunk>) handle).onNext(new StringChunk("test"));
+    ((DirectHandle<StringChunk>) handle).onComplete();
 
-    assertEquals("test", handle.get());
+    assertEquals("test", handle.get().getContent());
     assertFalse(handle.isCancelled());
     assertFalse(handle.isError());
   }
@@ -235,7 +252,7 @@ class DirectHandleTest {
   @Test
   void asyncEmit_shouldWorkCorrectly() throws Exception {
     RecordingListener listener = new RecordingListener();
-    DirectHandle<String, String> handle = new DirectHandle<>(new StringBuilderAdapter(), listener);
+    DirectHandle<StringChunk> handle = new DirectHandle<>(StringChunk.class, listener);
 
     ExecutorService executor = Executors.newSingleThreadExecutor();
     CountDownLatch latch = new CountDownLatch(1);
@@ -243,7 +260,7 @@ class DirectHandleTest {
     executor.submit(() -> {
       try {
         Thread.sleep(50);
-        handle.onNext("async");
+        handle.onNext(new StringChunk("async"));
         handle.onComplete();
         latch.countDown();
       } catch (InterruptedException e) {
@@ -251,9 +268,9 @@ class DirectHandleTest {
       }
     });
 
-    String result = handle.get(5, TimeUnit.SECONDS);
+    StringChunk result = handle.get(5, TimeUnit.SECONDS);
     assertTrue(latch.await(1, TimeUnit.SECONDS));
-    assertEquals("async", result);
+    assertEquals("async", result.getContent());
     executor.shutdown();
   }
 }

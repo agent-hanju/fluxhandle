@@ -8,7 +8,7 @@ import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import me.hanju.fluxhandle.exception.FluxAssemblerException;
+import me.hanju.fluxhandle.deltastream.merge.DeltaMerger;
 import me.hanju.fluxhandle.exception.FluxHandleException;
 import me.hanju.fluxhandle.exception.FluxListenerException;
 
@@ -24,52 +24,65 @@ import me.hanju.fluxhandle.exception.FluxListenerException;
  * {@link #onError(Throwable)}, and {@link #onComplete()} methods.
  *
  * <p>
+ * Delta merging is handled automatically based on field types:
+ * <ul>
+ * <li>String: append (concatenation)</li>
+ * <li>Number: sum (addition)</li>
+ * <li>Object: recursive merge</li>
+ * <li>Primitive List: extend</li>
+ * <li>Object List: index-based merge (requires {@code @StreamIndex})</li>
+ * </ul>
+ *
+ * <p>
+ * Alternatively, if the target class has a {@code merge(T)} method,
+ * that method will be used for custom merging logic.
+ *
+ * <p>
  * Example usage:
  *
  * <pre>{@code
- * FluxListener<String> listener = item -> System.out.println("received: " + item);
- * DirectHandle<String, String> handle = new DirectHandle<>(assembler, listener);
+ * FluxListener<ChatCompletionChunk> listener = chunk -> System.out.println("received: " + chunk);
+ * DirectHandle<ChatCompletionChunk> handle = new DirectHandle<>(ChatCompletionChunk.class, listener);
  *
- * handle.onNext("first");
- * handle.onNext("second");
+ * handle.onNext(chunk1);
+ * handle.onNext(chunk2);
  * handle.onComplete();
  *
- * String result = handle.get();
+ * ChatCompletionChunk result = handle.get();
  * }</pre>
  *
- * @param <T> the type of elements being streamed
- * @param <R> the type of the built result
+ * @param <T> the type of elements being streamed and the built result
  * @see Handle
  * @see FluxHandle
  * @see FluxListener
  */
-public class DirectHandle<T, R> implements Handle<T, R> {
+public class DirectHandle<T> implements Handle<T> {
   private static final Logger log = LoggerFactory.getLogger(DirectHandle.class);
 
   private final FluxListener<T> listener;
-  private final FluxAssembler<T, R> assembler;
-  private final CompletableFuture<R> future = new CompletableFuture<>();
+  private final DeltaMerger<T> merger;
+  private final CompletableFuture<T> future = new CompletableFuture<>();
 
   private Throwable error = null;
   private boolean completed = false;
   private boolean cancelled = false;
 
   /**
-   * Creates a new DirectHandle with the given assembler and listener.
+   * Creates a new DirectHandle with the given type and listener.
    *
-   * @param assembler the assembler for incremental result construction
-   * @param listener  the listener to receive streaming events
+   * @param type     the class of the streaming objects
+   * @param listener the listener to receive streaming events
    * @throws IllegalArgumentException if any parameter is null
    */
   public DirectHandle(
-      final FluxAssembler<T, R> assembler,
+      final Class<T> type,
       final FluxListener<T> listener) {
-    if (assembler == null) {
-      throw new IllegalArgumentException("assembler cannot be null");
+    if (type == null) {
+      throw new IllegalArgumentException("type cannot be null");
     } else if (listener == null) {
       throw new IllegalArgumentException("listener cannot be null");
     }
-    this.assembler = assembler;
+    this.merger = new DeltaMerger<>(type);
     this.listener = listener;
   }
 
@@ -77,7 +90,7 @@ public class DirectHandle<T, R> implements Handle<T, R> {
    * Emits an item to the handle.
    *
    * <p>
-   * The item will be applied to the assembler and the listener's
+   * The item will be merged into the accumulated result and the listener's
    * {@link FluxListener#onNext(Object)} will be called.
    *
    * @param item the item to emit
@@ -87,9 +100,9 @@ public class DirectHandle<T, R> implements Handle<T, R> {
       log.warn("emitting next failed. already completed.");
     } else {
       try {
-        this.assembler.applyDelta(item);
+        this.merger.applyDelta(item);
       } catch (final Exception e) {
-        this.onError(new FluxAssemblerException("applyDelta failed", e));
+        this.onError(new FluxHandleException("delta merge failed", e));
         return;
       }
       try {
@@ -125,10 +138,10 @@ public class DirectHandle<T, R> implements Handle<T, R> {
       this.error = e;
       this.completed = true;
       try {
-        this.future.complete(this.assembler.build());
+        this.future.complete(this.merger.build());
       } catch (final Exception ex) {
-        log.warn("assembler.build failed", ex);
-        e.addSuppressed(new FluxAssemblerException("assembler failed while error", ex));
+        log.warn("merger.build failed", ex);
+        e.addSuppressed(new FluxHandleException("merge build failed while error", ex));
         this.future.completeExceptionally(e);
       }
     }
@@ -145,11 +158,11 @@ public class DirectHandle<T, R> implements Handle<T, R> {
     if (this.completed) {
       log.warn("emitting complete failed. already completed.");
     } else {
-      final R result;
+      final T result;
       try {
-        result = this.assembler.build();
+        result = this.merger.build();
       } catch (final Exception e) {
-        this.onError(new FluxAssemblerException("assembler failed while complete", e));
+        this.onError(new FluxHandleException("merge build failed while complete", e));
         return;
       }
       try {
@@ -169,11 +182,11 @@ public class DirectHandle<T, R> implements Handle<T, R> {
     if (this.completed) {
       log.warn("cancel failed. already completed.");
     } else {
-      final R result;
+      final T result;
       try {
-        result = this.assembler.build();
+        result = this.merger.build();
       } catch (final Exception e) {
-        this.onError(new FluxAssemblerException("build failed while cancel", e));
+        this.onError(new FluxHandleException("build failed while cancel", e));
         return;
       }
       try {
@@ -205,7 +218,7 @@ public class DirectHandle<T, R> implements Handle<T, R> {
   }
 
   @Override
-  public R get() {
+  public T get() {
     try {
       return future.get();
     } catch (final ExecutionException e) {
@@ -221,7 +234,7 @@ public class DirectHandle<T, R> implements Handle<T, R> {
   }
 
   @Override
-  public R get(final long timeout, final TimeUnit unit) throws TimeoutException {
+  public T get(final long timeout, final TimeUnit unit) throws TimeoutException {
     if (unit == null) {
       throw new IllegalArgumentException("unit cannot be null");
     }
