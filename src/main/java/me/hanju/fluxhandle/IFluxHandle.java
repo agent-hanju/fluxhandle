@@ -6,18 +6,21 @@ import java.util.concurrent.TimeoutException;
 import me.hanju.fluxhandle.exception.FluxHandleException;
 
 /**
- * A common interface for handles that manage streaming data and produce a final
- * result.
+ * A common interface for handles that manage streaming data and produce a final result.
  *
  * <p>
- * Implementations process streaming items through delta merging for
- * incremental result construction and notify {@link FluxListener} of events.
+ * Implementations process streaming items of type {@code T} through delta mapping
+ * and merging to construct a result of type {@code R}.
  *
- * @param <T> the type of elements being streamed and the built result
+ * <p>
+ * The {@link FluxListener} receives original deltas of type {@code T} before transformation.
+ *
+ * @param <T> the type of input elements being streamed
+ * @param <R> the type of the built result
  * @see FluxHandle
- * @see DirectHandle
+ * @see SimpleFluxHandle
  */
-public interface Handle<T> {
+public interface IFluxHandle<T, R> {
 
   /**
    * Cancels the streaming and notifies the listener.
@@ -52,21 +55,20 @@ public interface Handle<T> {
   /**
    * Blocks until the stream completes and returns the built result.
    *
-   * @return the merged result
+   * @return the merged result of type {@code R}
    * @throws FluxHandleException if an error occurred during streaming
    */
-  T get();
+  R get();
 
   /**
-   * Blocks until the stream completes or the timeout expires, then returns the
-   * built result.
+   * Blocks until the stream completes or the timeout expires, then returns the built result.
    *
    * @param timeout the maximum time to wait
    * @param unit    the time unit of the timeout argument
-   * @return the merged result
+   * @return the merged result of type {@code R}
    * @throws TimeoutException         if the wait timed out
    * @throws IllegalArgumentException if unit is null
    * @throws FluxHandleException      if an error occurred during streaming
    */
-  T get(long timeout, TimeUnit unit) throws TimeoutException;
+  R get(long timeout, TimeUnit unit) throws TimeoutException;
 }

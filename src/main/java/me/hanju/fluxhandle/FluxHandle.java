@@ -1,5 +1,6 @@
 package me.hanju.fluxhandle;
 
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -8,6 +9,7 @@ import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import me.hanju.fluxhandle.deltastream.map.DeltaMapper;
 import me.hanju.fluxhandle.deltastream.merge.DeltaMerger;
 import me.hanju.fluxhandle.exception.FluxHandleException;
 import me.hanju.fluxhandle.exception.FluxListenerException;
@@ -17,62 +19,57 @@ import reactor.core.scheduler.Schedulers;
 
 /**
  * A wrapper for Project Reactor {@link Flux} that bridges reactive streams to
- * listener-based callbacks with incremental result building.
+ * listener-based callbacks with delta transformation and merging.
  *
  * <p>
- * FluxHandle subscribes to a {@link Flux} and processes each emitted item by:
+ * FluxHandle subscribes to a {@link Flux} of type {@code T} and processes each emitted item by:
  * <ul>
- * <li>Merging the delta into the accumulated result</li>
- * <li>Notifying the {@link FluxListener} of streaming events</li>
+ * <li>Notifying the {@link FluxListener} of the original delta</li>
+ * <li>Transforming the delta via {@link DeltaMapper} (0:N mapping)</li>
+ * <li>Merging transformed deltas via {@link DeltaMerger}</li>
  * </ul>
  *
  * <p>
- * The final result can be retrieved synchronously via {@link #get()} or
+ * The final result of type {@code R} can be retrieved synchronously via {@link #get()} or
  * {@link #get(long, TimeUnit)} after the stream completes.
  *
  * <p>
- * Delta merging is handled automatically based on field types:
- * <ul>
- * <li>String: append (concatenation)</li>
- * <li>Number: sum (addition)</li>
- * <li>Object: recursive merge</li>
- * <li>Primitive List: extend</li>
- * <li>Object List: index-based merge (requires {@code @StreamIndex})</li>
- * </ul>
- *
- * <p>
- * Alternatively, if the target class has a {@code merge(T)} method,
- * that method will be used for custom merging logic.
+ * For simple cases where {@code T == R} (no transformation needed),
+ * use {@link SimpleFluxHandle} instead.
  *
  * <p>
  * Example usage:
  *
  * <pre>{@code
- * Flux<ChatCompletionChunk> flux = ...;
- * FluxHandle<ChatCompletionChunk> handle = new FluxHandle<>(
+ * // Transform SDK chunks to domain objects
+ * DeltaMapper<SdkChunk, MyDelta> mapper = chunk ->
+ *     List.of(new MyDelta(chunk.getContent(), chunk.getIndex()));
+ *
+ * FluxHandle<SdkChunk, MyDelta> handle = new FluxHandle<>(
  *     flux,
- *     ChatCompletionChunk.class,
- *     chunk -> System.out.println(chunk)
+ *     mapper,
+ *     MyDelta.class,
+ *     chunk -> System.out.println("Received: " + chunk)
  * );
  *
- * // Wait for completion and get the result
- * ChatCompletionChunk result = handle.get();
- *
- * // Or cancel the stream
- * handle.cancel();
+ * MyDelta result = handle.get();
  * }</pre>
  *
- * @param <T> the type of elements emitted by the Flux and the built result
- * @see Handle
+ * @param <T> the type of input elements emitted by the Flux
+ * @param <R> the type of the transformed and merged result
+ * @see IFluxHandle
+ * @see SimpleFluxHandle
+ * @see DeltaMapper
  * @see FluxListener
  */
-public class FluxHandle<T> implements Handle<T> {
+public class FluxHandle<T, R> implements IFluxHandle<T, R> {
   private static final Logger log = LoggerFactory.getLogger(FluxHandle.class);
 
   private final FluxListener<T> listener;
   private final Disposable disposable;
-  private final DeltaMerger<T> merger;
-  private final CompletableFuture<T> future = new CompletableFuture<>();
+  private final DeltaMapper<T, R> mapper;
+  private final DeltaMerger<R> merger;
+  private final CompletableFuture<R> future = new CompletableFuture<>();
 
   private Throwable error = null;
   private boolean completed = false;
@@ -84,23 +81,28 @@ public class FluxHandle<T> implements Handle<T> {
    * <p>
    * The subscription is performed immediately on a bounded elastic scheduler.
    *
-   * @param flux     the reactive stream to subscribe to
-   * @param type     the class of the streaming objects
-   * @param listener the listener to receive streaming events
+   * @param flux       the reactive stream to subscribe to
+   * @param mapper     the delta mapper to transform input deltas
+   * @param resultType the class of the result type
+   * @param listener   the listener to receive streaming events
    * @throws IllegalArgumentException if any parameter is null
    */
   public FluxHandle(
       final Flux<T> flux,
-      final Class<T> type,
+      final DeltaMapper<T, R> mapper,
+      final Class<R> resultType,
       final FluxListener<T> listener) {
     if (flux == null) {
       throw new IllegalArgumentException("flux cannot be null");
-    } else if (type == null) {
-      throw new IllegalArgumentException("type cannot be null");
+    } else if (mapper == null) {
+      throw new IllegalArgumentException("mapper cannot be null");
+    } else if (resultType == null) {
+      throw new IllegalArgumentException("resultType cannot be null");
     } else if (listener == null) {
       throw new IllegalArgumentException("listener cannot be null");
     } else {
-      this.merger = new DeltaMerger<>(type);
+      this.mapper = mapper;
+      this.merger = new DeltaMerger<>(resultType);
       this.listener = listener;
       this.disposable = flux.subscribeOn(Schedulers.boundedElastic())
           .subscribe(
@@ -113,21 +115,37 @@ public class FluxHandle<T> implements Handle<T> {
   private synchronized void onNext(final T item) {
     if (this.completed) {
       log.warn("emitting next failed. already completed.");
-    } else {
+      return;
+    }
+
+    // 1. Notify listener with original delta
+    try {
+      this.listener.onNext(item);
+    } catch (final Exception ex) {
+      this.onError(new FluxListenerException("listener failed while emit next", ex));
+      return;
+    }
+
+    // 2. Transform delta (0:N mapping)
+    final List<R> mappedDeltas;
+    try {
+      mappedDeltas = this.mapper.map(item);
+    } catch (final Exception e) {
+      this.onError(new FluxHandleException("delta mapping failed", e));
+      return;
+    }
+
+    // 3. Merge each transformed delta
+    for (final R delta : mappedDeltas) {
       try {
-        this.merger.applyDelta(item);
+        this.merger.applyDelta(delta);
       } catch (final Exception e) {
         this.onError(new FluxHandleException("delta merge failed", e));
         return;
       }
-      try {
-        this.listener.onNext(item);
-      } catch (final Exception ex) {
-        this.onError(new FluxListenerException("listener failed while emit next", ex));
-        return;
-      }
-      log.debug("emitted: {}", item);
     }
+
+    log.debug("emitted: {} -> {} mapped", item, mappedDeltas.size());
   }
 
   private synchronized void onError(final Throwable e) {
@@ -157,7 +175,7 @@ public class FluxHandle<T> implements Handle<T> {
     if (this.completed) {
       log.warn("emitting complete failed. already completed.");
     } else {
-      final T result;
+      final R result;
       try {
         result = this.merger.build();
       } catch (final Exception e) {
@@ -174,7 +192,6 @@ public class FluxHandle<T> implements Handle<T> {
       this.completed = true;
       log.info("completed");
     }
-
   }
 
   /**
@@ -190,7 +207,7 @@ public class FluxHandle<T> implements Handle<T> {
       log.warn("cancel failed. already completed.");
     } else {
       this.disposable.dispose();
-      final T result;
+      final R result;
       try {
         result = this.merger.build();
       } catch (final Exception e) {
@@ -208,7 +225,6 @@ public class FluxHandle<T> implements Handle<T> {
       this.future.complete(result);
       log.info("cancelled");
     }
-
   }
 
   /**
@@ -244,11 +260,11 @@ public class FluxHandle<T> implements Handle<T> {
   /**
    * Blocks until the stream completes and returns the built result.
    *
-   * @return the merged result
+   * @return the merged result of type {@code R}
    * @throws FluxHandleException if an error occurred during streaming
    */
   @Override
-  public T get() {
+  public R get() {
     try {
       return future.get();
     } catch (final ExecutionException e) {
@@ -264,18 +280,17 @@ public class FluxHandle<T> implements Handle<T> {
   }
 
   /**
-   * Blocks until the stream completes or the timeout expires, then returns the
-   * built result.
+   * Blocks until the stream completes or the timeout expires, then returns the built result.
    *
    * @param timeout the maximum time to wait
    * @param unit    the time unit of the timeout argument
-   * @return the merged result
+   * @return the merged result of type {@code R}
    * @throws TimeoutException         if the wait timed out
    * @throws IllegalArgumentException if unit is null
    * @throws FluxHandleException      if an error occurred during streaming
    */
   @Override
-  public T get(final long timeout, final TimeUnit unit) throws TimeoutException {
+  public R get(final long timeout, final TimeUnit unit) throws TimeoutException {
     if (unit == null) {
       throw new IllegalArgumentException("unit cannot be null");
     }

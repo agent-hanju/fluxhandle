@@ -11,17 +11,29 @@ import org.slf4j.LoggerFactory;
 import me.hanju.fluxhandle.deltastream.merge.DeltaMerger;
 import me.hanju.fluxhandle.exception.FluxHandleException;
 import me.hanju.fluxhandle.exception.FluxListenerException;
+import reactor.core.Disposable;
+import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Schedulers;
 
 /**
- * A handle that allows direct emission of items while using the same
- * {@link FluxListener} pattern as {@link FluxHandle}.
+ * A simplified wrapper for Project Reactor {@link Flux} that bridges reactive streams
+ * to listener-based callbacks with delta merging.
  *
  * <p>
- * Unlike {@link FluxHandle} which subscribes to a
- * {@link reactor.core.publisher.Flux},
- * DirectHandle allows external code to directly emit items, errors, and
- * completion signals through public {@link #onNext(Object)},
- * {@link #onError(Throwable)}, and {@link #onComplete()} methods.
+ * SimpleFluxHandle is for cases where the input type and result type are the same
+ * ({@code T == T}), meaning no transformation is needed. It subscribes to a {@link Flux}
+ * and processes each emitted item by:
+ * <ul>
+ * <li>Notifying the {@link FluxListener} of the delta</li>
+ * <li>Merging the delta directly via {@link DeltaMerger}</li>
+ * </ul>
+ *
+ * <p>
+ * For cases where transformation is needed ({@code T -> R}), use {@link FluxHandle} instead.
+ *
+ * <p>
+ * The final result can be retrieved synchronously via {@link #get()} or
+ * {@link #get(long, TimeUnit)} after the stream completes.
  *
  * <p>
  * Delta merging is handled automatically based on field types:
@@ -34,32 +46,29 @@ import me.hanju.fluxhandle.exception.FluxListenerException;
  * </ul>
  *
  * <p>
- * Alternatively, if the target class has a {@code merge(T)} method,
- * that method will be used for custom merging logic.
- *
- * <p>
  * Example usage:
  *
  * <pre>{@code
- * FluxListener<ChatCompletionChunk> listener = chunk -> System.out.println("received: " + chunk);
- * DirectHandle<ChatCompletionChunk> handle = new DirectHandle<>(ChatCompletionChunk.class, listener);
- *
- * handle.onNext(chunk1);
- * handle.onNext(chunk2);
- * handle.onComplete();
+ * Flux<ChatCompletionChunk> flux = ...;
+ * SimpleFluxHandle<ChatCompletionChunk> handle = new SimpleFluxHandle<>(
+ *     flux,
+ *     ChatCompletionChunk.class,
+ *     chunk -> System.out.println(chunk)
+ * );
  *
  * ChatCompletionChunk result = handle.get();
  * }</pre>
  *
- * @param <T> the type of elements being streamed and the built result
- * @see Handle
+ * @param <T> the type of elements emitted by the Flux and the built result
+ * @see IFluxHandle
  * @see FluxHandle
  * @see FluxListener
  */
-public class DirectHandle<T> implements Handle<T> {
-  private static final Logger log = LoggerFactory.getLogger(DirectHandle.class);
+public class SimpleFluxHandle<T> implements IFluxHandle<T, T> {
+  private static final Logger log = LoggerFactory.getLogger(SimpleFluxHandle.class);
 
   private final FluxListener<T> listener;
+  private final Disposable disposable;
   private final DeltaMerger<T> merger;
   private final CompletableFuture<T> future = new CompletableFuture<>();
 
@@ -68,63 +77,63 @@ public class DirectHandle<T> implements Handle<T> {
   private boolean cancelled = false;
 
   /**
-   * Creates a new DirectHandle with the given type and listener.
+   * Creates a new SimpleFluxHandle that subscribes to the given Flux.
    *
+   * <p>
+   * The subscription is performed immediately on a bounded elastic scheduler.
+   *
+   * @param flux     the reactive stream to subscribe to
    * @param type     the class of the streaming objects
    * @param listener the listener to receive streaming events
    * @throws IllegalArgumentException if any parameter is null
    */
-  public DirectHandle(
+  public SimpleFluxHandle(
+      final Flux<T> flux,
       final Class<T> type,
       final FluxListener<T> listener) {
-    if (type == null) {
+    if (flux == null) {
+      throw new IllegalArgumentException("flux cannot be null");
+    } else if (type == null) {
       throw new IllegalArgumentException("type cannot be null");
     } else if (listener == null) {
       throw new IllegalArgumentException("listener cannot be null");
+    } else {
+      this.merger = new DeltaMerger<>(type);
+      this.listener = listener;
+      this.disposable = flux.subscribeOn(Schedulers.boundedElastic())
+          .subscribe(
+              this::onNext,
+              this::onError,
+              this::onComplete);
     }
-    this.merger = new DeltaMerger<>(type);
-    this.listener = listener;
   }
 
-  /**
-   * Emits an item to the handle.
-   *
-   * <p>
-   * The item will be merged into the accumulated result and the listener's
-   * {@link FluxListener#onNext(Object)} will be called.
-   *
-   * @param item the item to emit
-   */
-  public synchronized void onNext(final T item) {
+  private synchronized void onNext(final T item) {
     if (this.completed) {
       log.warn("emitting next failed. already completed.");
-    } else {
-      try {
-        this.merger.applyDelta(item);
-      } catch (final Exception e) {
-        this.onError(new FluxHandleException("delta merge failed", e));
-        return;
-      }
-      try {
-        this.listener.onNext(item);
-      } catch (final Exception ex) {
-        this.onError(new FluxListenerException("listener failed while emit next", ex));
-        return;
-      }
-      log.debug("emitted: {}", item);
+      return;
     }
+
+    // 1. Merge delta directly
+    try {
+      this.merger.applyDelta(item);
+    } catch (final Exception e) {
+      this.onError(new FluxHandleException("delta merge failed", e));
+      return;
+    }
+
+    // 2. Notify listener
+    try {
+      this.listener.onNext(item);
+    } catch (final Exception ex) {
+      this.onError(new FluxListenerException("listener failed while emit next", ex));
+      return;
+    }
+
+    log.debug("emitted: {}", item);
   }
 
-  /**
-   * Emits an error to the handle.
-   *
-   * <p>
-   * The listener's {@link FluxListener#onError(Throwable)} will be called and
-   * the handle will be marked as completed.
-   *
-   * @param e the error to emit
-   */
-  public synchronized void onError(final Throwable e) {
+  private synchronized void onError(final Throwable e) {
     log.info("received an error", e);
     if (this.completed) {
       log.warn("emitting error failed. already completed.");
@@ -147,14 +156,7 @@ public class DirectHandle<T> implements Handle<T> {
     }
   }
 
-  /**
-   * Completes the handle successfully.
-   *
-   * <p>
-   * The listener's {@link FluxListener#onComplete()} will be called and
-   * the result will be available via {@link #get()}.
-   */
-  public synchronized void onComplete() {
+  private synchronized void onComplete() {
     if (this.completed) {
       log.warn("emitting complete failed. already completed.");
     } else {
@@ -177,11 +179,19 @@ public class DirectHandle<T> implements Handle<T> {
     }
   }
 
+  /**
+   * Cancels the streaming and notifies the listener.
+   *
+   * <p>
+   * If already completed, this method has no effect.
+   * The current accumulated result will still be available via {@link #get()}.
+   */
   @Override
   public synchronized void cancel() {
     if (this.completed) {
       log.warn("cancel failed. already completed.");
     } else {
+      this.disposable.dispose();
       final T result;
       try {
         result = this.merger.build();
@@ -202,21 +212,42 @@ public class DirectHandle<T> implements Handle<T> {
     }
   }
 
+  /**
+   * Returns whether this handle was cancelled.
+   *
+   * @return {@code true} if cancelled, {@code false} otherwise
+   */
   @Override
   public boolean isCancelled() {
     return this.cancelled;
   }
 
+  /**
+   * Returns whether an error occurred during streaming.
+   *
+   * @return {@code true} if an error occurred, {@code false} otherwise
+   */
   @Override
   public boolean isError() {
     return this.error != null;
   }
 
+  /**
+   * Returns the error that occurred during streaming, if any.
+   *
+   * @return the error, or {@code null} if no error occurred
+   */
   @Override
   public Throwable getError() {
     return this.error;
   }
 
+  /**
+   * Blocks until the stream completes and returns the built result.
+   *
+   * @return the merged result
+   * @throws FluxHandleException if an error occurred during streaming
+   */
   @Override
   public T get() {
     try {
@@ -233,6 +264,16 @@ public class DirectHandle<T> implements Handle<T> {
     }
   }
 
+  /**
+   * Blocks until the stream completes or the timeout expires, then returns the built result.
+   *
+   * @param timeout the maximum time to wait
+   * @param unit    the time unit of the timeout argument
+   * @return the merged result
+   * @throws TimeoutException         if the wait timed out
+   * @throws IllegalArgumentException if unit is null
+   * @throws FluxHandleException      if an error occurred during streaming
+   */
   @Override
   public T get(final long timeout, final TimeUnit unit) throws TimeoutException {
     if (unit == null) {
