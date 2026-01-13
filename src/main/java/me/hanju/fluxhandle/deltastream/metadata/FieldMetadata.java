@@ -7,6 +7,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Set;
 import java.util.function.BiConsumer;
@@ -30,17 +31,21 @@ import me.hanju.fluxhandle.deltastream.annotation.StreamOverwrite;
  *   <li>LambdaMetafactory: 직접 호출과 거의 동일</li>
  * </ul>
  *
- * @param fieldName    필드 이름
- * @param fieldType    필드 타입
- * @param elementType  List 필드의 경우 요소 타입, 아니면 null
- * @param getter       LambdaMetafactory로 생성한 최적화된 getter
- * @param setter       LambdaMetafactory로 생성한 최적화된 setter (Record는 null)
- * @param isSpecialKey 인덱스 필드 또는 @StreamOverwrite 필드 여부 (병합 시 덮어쓰기)
+ * @param fieldName           필드 이름
+ * @param fieldType           필드 타입 (런타임 타입, TypeVariable은 Object로 소거됨)
+ * @param resolvedFieldType   해석된 필드 타입 (TypeVariable이 실제 타입으로 치환됨)
+ * @param elementType         List 필드의 경우 요소 타입 (raw Class), 아니면 null
+ * @param resolvedElementType List 필드의 경우 해석된 요소 타입 (제네릭 정보 포함), 아니면 null
+ * @param getter              LambdaMetafactory로 생성한 최적화된 getter
+ * @param setter              LambdaMetafactory로 생성한 최적화된 setter (Record는 null)
+ * @param isSpecialKey        인덱스 필드 또는 @StreamOverwrite 필드 여부 (병합 시 덮어쓰기)
  */
 public record FieldMetadata(
     String fieldName,
     Class<?> fieldType,
+    Type resolvedFieldType,
     Class<?> elementType,
+    Type resolvedElementType,
     Function<Object, Object> getter,
     BiConsumer<Object, Object> setter,
     boolean isSpecialKey
@@ -59,19 +64,23 @@ public record FieldMetadata(
    * {@link LambdaMetafactory}를 사용하여 고성능 getter/setter를 생성한다.
    * invokedynamic과 같은 메커니즘을 사용하여 직접 메서드 호출과 거의 동일한 성능을 보장한다.
    *
-   * @param fieldName      필드 이름
-   * @param fieldType      필드 타입
-   * @param elementType    List 요소 타입
-   * @param field          Field 객체 (@StreamOverwrite 어노테이션 확인용)
-   * @param getterMethod   getter 메서드 (필수)
-   * @param setterMethod   setter 메서드 (Record는 null)
-   * @param isIndexField   인덱스 필드 여부 (@StreamIndex 또는 "index" 이름)
+   * @param fieldName           필드 이름
+   * @param fieldType           필드 타입 (런타임 타입)
+   * @param resolvedFieldType   해석된 필드 타입 (TypeVariable이 실제 타입으로 치환됨)
+   * @param elementType         List 요소 타입 (raw Class)
+   * @param resolvedElementType List 요소의 해석된 타입 (제네릭 정보 포함)
+   * @param field               Field 객체 (@StreamOverwrite 어노테이션 확인용)
+   * @param getterMethod        getter 메서드 (필수)
+   * @param setterMethod        setter 메서드 (Record는 null)
+   * @param isIndexField        인덱스 필드 여부 (@StreamIndex 또는 "index" 이름)
    * @return 생성된 FieldMetadata
    */
   public static FieldMetadata of(
       final String fieldName,
       final Class<?> fieldType,
+      final Type resolvedFieldType,
       final Class<?> elementType,
+      final Type resolvedElementType,
       final Field field,
       final Method getterMethod,
       final Method setterMethod,
@@ -86,7 +95,9 @@ public record FieldMetadata(
     return new FieldMetadata(
         fieldName,
         fieldType,
+        resolvedFieldType,
         elementType,
+        resolvedElementType,
         getter,
         setter,
         isSpecialKey
@@ -244,5 +255,73 @@ public record FieldMetadata(
    */
   public boolean isObject() {
     return !PRIMITIVE_TYPES.contains(fieldType) && !isList();
+  }
+
+  /**
+   * 해석된 필드 타입의 raw Class를 반환한다.
+   *
+   * <p>
+   * TypeVariable 바인딩이 해석된 후의 실제 Class를 반환한다.
+   * 예를 들어 {@code T message}에서 T가 CitedMessage로 바인딩된 경우
+   * {@code CitedMessage.class}를 반환한다.
+   *
+   * @return 해석된 필드의 raw Class, 없으면 fieldType 반환
+   */
+  public Class<?> getResolvedFieldClass() {
+    if (resolvedFieldType == null) {
+      return fieldType;
+    }
+    final Class<?> resolved = TypeVariableResolver.getRawClass(resolvedFieldType);
+    return resolved != null ? resolved : fieldType;
+  }
+
+  /**
+   * 해석된 필드 타입의 TypeVariable 바인딩을 반환한다.
+   *
+   * <p>
+   * 중첩된 제네릭 타입 처리에 필요하다.
+   * 예를 들어 필드 타입이 {@code Container<String>}인 경우
+   * {@code {T -> String}} 바인딩을 추출한다.
+   *
+   * @return TypeVariable 이름 -> Type 매핑, 바인딩이 없으면 빈 맵
+   */
+  public java.util.Map<String, Type> getFieldTypeBindings() {
+    if (resolvedFieldType == null) {
+      return java.util.Map.of();
+    }
+    return TypeVariableResolver.extractBindingsFromType(resolvedFieldType);
+  }
+
+  /**
+   * 해석된 요소 타입의 raw Class를 반환한다.
+   *
+   * <p>
+   * TypeVariable 바인딩이 해석된 후의 실제 Class를 반환한다.
+   * 예를 들어 {@code List<Choice<CitedMessage>>}의 경우 {@code Choice.class}를 반환한다.
+   *
+   * @return 해석된 요소의 raw Class, 없으면 elementType 반환
+   */
+  public Class<?> getResolvedElementClass() {
+    if (resolvedElementType == null) {
+      return elementType;
+    }
+    final Class<?> resolved = TypeVariableResolver.getRawClass(resolvedElementType);
+    return resolved != null ? resolved : elementType;
+  }
+
+  /**
+   * 해석된 요소 타입의 TypeVariable 바인딩을 반환한다.
+   *
+   * <p>
+   * 중첩된 제네릭 타입 처리에 필요하다.
+   * 예를 들어 {@code Choice<CitedMessage>}에서 {@code {T -> CitedMessage}} 바인딩을 추출한다.
+   *
+   * @return TypeVariable 이름 -> Type 매핑, 바인딩이 없으면 빈 맵
+   */
+  public java.util.Map<String, Type> getElementTypeBindings() {
+    if (resolvedElementType == null) {
+      return java.util.Map.of();
+    }
+    return TypeVariableResolver.extractBindingsFromType(resolvedElementType);
   }
 }

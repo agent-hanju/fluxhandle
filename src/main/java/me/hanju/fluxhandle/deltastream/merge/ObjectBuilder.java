@@ -2,6 +2,7 @@ package me.hanju.fluxhandle.deltastream.merge;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.RecordComponent;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -41,11 +42,37 @@ public final class ObjectBuilder {
    * @return 생성된 인스턴스
    */
   public static <T> T build(final Class<T> type, final Map<String, Object> values) {
+    return build(type, values, Map.of());
+  }
+
+  /**
+   * TypeVariable 바인딩과 함께 대상 타입의 인스턴스를 생성한다.
+   *
+   * <p>
+   * 제네릭 상속 구조에서 TypeVariable이 해석된 바인딩을 전달받아 사용한다.
+   * 예를 들어 {@code Choice<CitedMessage>}를 빌드할 때
+   * {@code {T -> CitedMessage}} 바인딩이 전달된다.
+   *
+   * @param <T>      대상 타입
+   * @param type     인스턴스화할 클래스
+   * @param values   누적된 필드 값들 (Map 기반)
+   * @param bindings TypeVariable 바인딩 (부모에서 전달)
+   * @return 생성된 인스턴스
+   */
+  public static <T> T build(
+      final Class<T> type,
+      final Map<String, Object> values,
+      final Map<String, Type> bindings) {
+
     if (values == null) {
       return null;
     }
 
-    final TypeInfo typeInfo = TypeMetadataCache.getTypeInfo(type);
+    // 바인딩이 비어있으면 타입에서 자동으로 바인딩을 추출
+    // (예: CitedResponse.class → {T=CitedMessage} 추출)
+    final TypeInfo typeInfo = (bindings == null || bindings.isEmpty())
+        ? TypeMetadataCache.getTypeInfo(type)
+        : TypeMetadataCache.getTypeInfo(type, bindings);
 
     // 중첩된 Map/List를 실제 객체 타입으로 변환
     final Map<String, Object> resolvedValues = resolveNestedValues(typeInfo, values);
@@ -55,7 +82,7 @@ public final class ObjectBuilder {
       return buildRecord(type, resolvedValues);
     } else {
       // 일반 클래스: 기본 생성자 + 필드 설정
-      return buildClass(type, resolvedValues);
+      return buildClass(type, resolvedValues, bindings);
     }
   }
 
@@ -80,7 +107,7 @@ public final class ObjectBuilder {
    * 단일 필드 값을 실제 타입으로 변환한다.
    *
    * <ul>
-   *   <li>Map -> 객체 (재귀)</li>
+   *   <li>Map -> 객체 (재귀, TypeVariable 바인딩 포함)</li>
    *   <li>List&lt;Map&gt; -> List&lt;객체&gt; (재귀)</li>
    *   <li>그 외 -> 그대로</li>
    * </ul>
@@ -91,9 +118,12 @@ public final class ObjectBuilder {
       return null;
     }
 
-    // Map -> 객체 변환 (재귀)
+    // Map -> 객체 변환 (재귀, 해석된 필드 타입과 바인딩 사용)
     if (value instanceof Map<?, ?> nestedMap && field.isObject()) {
-      return build(field.fieldType(), (Map<String, Object>) nestedMap);
+      // 해석된 필드 클래스와 바인딩을 사용 (TypeVariable 해석)
+      final Class<?> resolvedClass = field.getResolvedFieldClass();
+      final Map<String, Type> fieldBindings = field.getFieldTypeBindings();
+      return build(resolvedClass, (Map<String, Object>) nestedMap, fieldBindings);
     }
 
     // List<Map> -> List<객체> 변환 (재귀)
@@ -109,11 +139,15 @@ public final class ObjectBuilder {
    */
   @SuppressWarnings("unchecked")
   private static List<Object> resolveObjectList(final FieldMetadata field, final List<?> list) {
+    // 해석된 요소 타입의 바인딩을 가져옴 (TypeVariable 해석)
+    final Map<String, Type> elementBindings = field.getElementTypeBindings();
+    final Class<?> elementClass = field.getResolvedElementClass();
+
     final List<Object> resolvedList = new ArrayList<>();
     for (final Object item : list) {
       if (item instanceof Map<?, ?> itemMap) {
-        // Map -> 객체로 변환
-        resolvedList.add(build(field.elementType(), (Map<String, Object>) itemMap));
+        // Map -> 객체로 변환 (바인딩과 함께)
+        resolvedList.add(build(elementClass, (Map<String, Object>) itemMap, elementBindings));
       } else {
         // 이미 객체면 그대로
         resolvedList.add(item);
@@ -158,7 +192,11 @@ public final class ObjectBuilder {
    * <p>
    * 기본 생성자로 인스턴스 생성 후 setter 메서드로 값 설정.
    */
-  private static <T> T buildClass(final Class<T> type, final Map<String, Object> values) {
+  private static <T> T buildClass(
+      final Class<T> type,
+      final Map<String, Object> values,
+      final Map<String, Type> bindings) {
+
     try {
       // 기본 생성자로 인스턴스 생성
       final Constructor<T> constructor = type.getDeclaredConstructor();
@@ -166,7 +204,7 @@ public final class ObjectBuilder {
       final T instance = constructor.newInstance();
 
       // 각 필드에 setter로 값 설정
-      final TypeInfo typeInfo = TypeMetadataCache.getTypeInfo(type);
+      final TypeInfo typeInfo = TypeMetadataCache.getTypeInfo(type, bindings);
       for (final FieldMetadata field : typeInfo.fields()) {
         final Object value = values.get(field.fieldName());
         if (value != null && field.setter() != null) {

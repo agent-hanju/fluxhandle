@@ -1,5 +1,6 @@
 package me.hanju.fluxhandle.deltastream.merge;
 
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -179,7 +180,10 @@ public final class DeltaMerger<T> {
       final Object deltaValue) {
 
     final Map<String, Object> accMap = (Map<String, Object>) accValue;
-    final TypeInfo nestedInfo = TypeMetadataCache.getTypeInfo(field.fieldType());
+    // 해석된 필드 타입과 바인딩 사용 (TypeVariable 해석)
+    final Class<?> resolvedClass = field.getResolvedFieldClass();
+    final Map<String, Type> fieldBindings = field.getFieldTypeBindings();
+    final TypeInfo nestedInfo = TypeMetadataCache.getTypeInfo(resolvedClass, fieldBindings);
     mergeIntoMap(accMap, deltaValue, nestedInfo);
   }
 
@@ -213,13 +217,17 @@ public final class DeltaMerger<T> {
     }
 
     // 객체 List: index 기반 병합
-    final TypeInfo elementInfo = TypeMetadataCache.getTypeInfo(field.elementType());
+    // 해석된 요소 타입의 바인딩을 가져옴 (TypeVariable 해석)
+    final Map<String, Type> elementBindings = field.getElementTypeBindings();
+    final Class<?> elementClass = field.getResolvedElementClass();
+
+    final TypeInfo elementInfo = TypeMetadataCache.getTypeInfo(elementClass, elementBindings);
     final String indexFieldName = elementInfo.indexFieldName();
 
     // 객체 List는 반드시 index 필드가 있어야 함
     if (indexFieldName == null) {
       throw new MergeException(
-          "index field required for object list element: " + field.elementType().getName()
+          "index field required for object list element: " + elementClass.getName()
               + ". Use @StreamIndex annotation or add an 'index' field.",
           null);
     }
@@ -324,7 +332,10 @@ public final class DeltaMerger<T> {
    */
   private Map<String, Object> cloneObject(final Object value, final FieldMetadata field) {
     final Map<String, Object> map = new HashMap<>();
-    final TypeInfo nestedInfo = TypeMetadataCache.getTypeInfo(field.fieldType());
+    // 해석된 필드 타입과 바인딩 사용 (TypeVariable 해석)
+    final Class<?> resolvedClass = field.getResolvedFieldClass();
+    final Map<String, Type> fieldBindings = field.getFieldTypeBindings();
+    final TypeInfo nestedInfo = TypeMetadataCache.getTypeInfo(resolvedClass, fieldBindings);
     mergeIntoMap(map, value, nestedInfo);
     return map;
   }
@@ -339,12 +350,16 @@ public final class DeltaMerger<T> {
     }
 
     // 객체 List: 각 요소를 Map으로 변환하며 복사
-    final TypeInfo elementInfo = TypeMetadataCache.getTypeInfo(field.elementType());
+    // 해석된 요소 타입의 바인딩을 가져옴 (TypeVariable 해석)
+    final Map<String, Type> elementBindings = field.getElementTypeBindings();
+    final Class<?> elementClass = field.getResolvedElementClass();
+
+    final TypeInfo elementInfo = TypeMetadataCache.getTypeInfo(elementClass, elementBindings);
     final String indexFieldName = elementInfo.indexFieldName();
 
     if (indexFieldName == null) {
       throw new MergeException(
-          "index field required for object list element: " + field.elementType().getName()
+          "index field required for object list element: " + elementClass.getName()
               + ". Use @StreamIndex annotation or add an 'index' field.",
           null);
     }

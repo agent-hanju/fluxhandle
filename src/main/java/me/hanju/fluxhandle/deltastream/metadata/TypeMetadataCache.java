@@ -14,6 +14,7 @@ import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BinaryOperator;
 
@@ -33,8 +34,8 @@ import me.hanju.fluxhandle.deltastream.annotation.StreamIndex;
  */
 public final class TypeMetadataCache {
 
-  // 클래스 -> TypeInfo 매핑 캐시 (스레드 세이프)
-  private static final ConcurrentHashMap<Class<?>, TypeInfo> CACHE = new ConcurrentHashMap<>();
+  // (Class, bindings) -> TypeInfo 매핑 캐시 (스레드 세이프)
+  private static final ConcurrentHashMap<TypeInfoKey, TypeInfo> CACHE = new ConcurrentHashMap<>();
 
   // Convention over Configuration: "index"라는 이름의 필드는 자동으로 인덱스 필드로 인식
   private static final String DEFAULT_INDEX_FIELD = "index";
@@ -43,14 +44,47 @@ public final class TypeMetadataCache {
   }
 
   /**
+   * 캐시 키: 클래스와 TypeVariable 바인딩의 조합.
+   *
+   * <p>
+   * 같은 클래스라도 다른 바인딩을 가지면 다른 TypeInfo가 필요하다.
+   * 예를 들어 {@code Choice<String>}과 {@code Choice<CitedMessage>}는
+   * 다른 캐시 엔트리를 가진다.
+   */
+  private record TypeInfoKey(Class<?> type, Map<String, Type> bindings) {
+    TypeInfoKey {
+      bindings = bindings != null && !bindings.isEmpty() ? Map.copyOf(bindings) : Map.of();
+    }
+  }
+
+  /**
    * 주어진 타입의 메타데이터를 반환한다. 캐시에 없으면 계산 후 캐시에 저장.
+   *
+   * <p>
+   * 이 메서드는 상속 계층에서 TypeVariable 바인딩을 자동으로 추출한다.
    *
    * @param type 분석할 클래스
    * @return 타입 메타데이터
    */
   public static TypeInfo getTypeInfo(final Class<?> type) {
-    // computeIfAbsent: 캐시에 없으면 computeTypeInfo 호출, 있으면 캐시된 값 반환
-    return CACHE.computeIfAbsent(type, TypeMetadataCache::computeTypeInfo);
+    return getTypeInfo(type, TypeVariableResolver.buildBindings(type));
+  }
+
+  /**
+   * TypeVariable 바인딩과 함께 타입 메타데이터를 반환한다.
+   *
+   * <p>
+   * 부모 컨텍스트에서 TypeVariable 바인딩이 전달될 때 사용한다.
+   * 예를 들어 {@code List<Choice<CitedMessage>>}의 요소를 분석할 때
+   * {@code {T -> CitedMessage}} 바인딩이 전달된다.
+   *
+   * @param type     분석할 클래스
+   * @param bindings TypeVariable 바인딩 (부모에서 전달)
+   * @return 타입 메타데이터
+   */
+  public static TypeInfo getTypeInfo(final Class<?> type, final Map<String, Type> bindings) {
+    final TypeInfoKey key = new TypeInfoKey(type, bindings);
+    return CACHE.computeIfAbsent(key, k -> computeTypeInfo(k.type(), k.bindings()));
   }
 
   /**
@@ -63,8 +97,11 @@ public final class TypeMetadataCache {
   /**
    * 클래스의 타입 정보를 계산한다.
    * Record와 일반 클래스를 구분하여 처리.
+   *
+   * @param type     분석할 클래스
+   * @param bindings TypeVariable 바인딩
    */
-  private static TypeInfo computeTypeInfo(final Class<?> type) {
+  private static TypeInfo computeTypeInfo(final Class<?> type, final Map<String, Type> bindings) {
     final List<FieldMetadata> fields = new ArrayList<>();
 
     // merge(T) 메서드가 있는지 찾기
@@ -80,13 +117,20 @@ public final class TypeMetadataCache {
         final Field field = getRecordField(type, component.getName());
         final Method accessor = component.getAccessor();
 
-        final Class<?> elementType = extractElementType(component.getGenericType());
+        // 바인딩을 사용하여 TypeVariable 해석
+        final Type resolvedGenericType = TypeVariableResolver.resolveType(
+            component.getGenericType(), bindings);
+
+        final Class<?> elementType = extractElementType(resolvedGenericType);
+        final Type resolvedElementType = extractResolvedElementType(resolvedGenericType);
         final boolean isIndexField = component.getName().equals(indexFieldName);
 
         fields.add(FieldMetadata.of(
             component.getName(),
             component.getType(),
+            resolvedGenericType,  // 해석된 필드 타입
             elementType,
+            resolvedElementType,
             field,
             accessor,
             null, // Record는 setter 없음
@@ -102,13 +146,20 @@ public final class TypeMetadataCache {
         final Method getter = findGetter(type, field.getName(), field.getType());
         final Method setter = findSetter(type, field.getName(), field.getType());
 
-        final Class<?> elementType = extractElementType(field.getGenericType());
+        // 바인딩을 사용하여 TypeVariable 해석
+        final Type resolvedGenericType = TypeVariableResolver.resolveType(
+            field.getGenericType(), bindings);
+
+        final Class<?> elementType = extractElementType(resolvedGenericType);
+        final Type resolvedElementType = extractResolvedElementType(resolvedGenericType);
         final boolean isIndexField = field.getName().equals(indexFieldName);
 
         fields.add(FieldMetadata.of(
             field.getName(),
             field.getType(),
+            resolvedGenericType,  // 해석된 필드 타입
             elementType,
+            resolvedElementType,
             field,
             getter,
             setter,
@@ -296,7 +347,7 @@ public final class TypeMetadataCache {
   }
 
   /**
-   * 제네릭 타입에서 요소 타입을 추출한다.
+   * 제네릭 타입에서 요소 타입을 추출한다. (raw Class만 반환)
    * 예: List<String> -> String, List<Map<String, Object>> -> Map
    */
   private static Class<?> extractElementType(final Type genericType) {
@@ -315,6 +366,26 @@ public final class TypeMetadataCache {
         if (rawType instanceof Class<?> rawClass) {
           return rawClass;
         }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 제네릭 타입에서 해석된 요소 타입을 추출한다. (제네릭 정보 포함)
+   *
+   * <p>
+   * 예: {@code List<Choice<CitedMessage>>} -> {@code Choice<CitedMessage>} (ParameterizedType)
+   * 이 메서드는 TypeVariable 바인딩 정보를 보존한다.
+   *
+   * @param genericType 분석할 제네릭 타입
+   * @return 첫 번째 타입 인자 (제네릭 정보 포함), 없으면 null
+   */
+  private static Type extractResolvedElementType(final Type genericType) {
+    if (genericType instanceof ParameterizedType pt) {
+      final Type[] typeArgs = pt.getActualTypeArguments();
+      if (typeArgs.length > 0) {
+        return typeArgs[0];
       }
     }
     return null;

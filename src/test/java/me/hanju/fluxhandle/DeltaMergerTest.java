@@ -617,6 +617,131 @@ class DeltaMergerTest {
     }
   }
 
+  /**
+   * TypeVariable 해석 테스트.
+   * 제네릭 상속 구조에서 TypeVariable이 올바르게 해석되는지 검증한다.
+   */
+  @Nested
+  class TypeVariableResolution {
+
+    @Test
+    void shouldResolveTypeVariableInInheritance() {
+      // CitedResponse extends BaseResponse<CitedMessage>
+      // choices 필드는 List<GenericChoice<CitedMessage>>가 됨
+      DeltaMerger<CitedResponse> merger = new DeltaMerger<>(CitedResponse.class);
+
+      // 첫 번째 델타
+      CitedResponse delta1 = new CitedResponse();
+      delta1.id = "resp_1";
+      delta1.choices = new ArrayList<>();
+
+      GenericChoice<CitedMessage> choice1 = new GenericChoice<>();
+      choice1.index = 0;
+      choice1.message = new CitedMessage();
+      choice1.message.content = "Hello";
+      choice1.message.citation = "source1";
+      delta1.choices.add(choice1);
+
+      merger.applyDelta(delta1);
+
+      // 두 번째 델타 - 같은 index의 choice에 추가 내용
+      CitedResponse delta2 = new CitedResponse();
+      delta2.choices = new ArrayList<>();
+
+      GenericChoice<CitedMessage> choice2 = new GenericChoice<>();
+      choice2.index = 0;
+      choice2.message = new CitedMessage();
+      choice2.message.content = " world";
+      choice2.message.citation = ", source2";
+      delta2.choices.add(choice2);
+
+      merger.applyDelta(delta2);
+
+      // 검증
+      CitedResponse result = merger.build();
+      assertEquals("resp_1", result.id);
+      assertEquals(1, result.choices.size());
+
+      GenericChoice<CitedMessage> resultChoice = result.choices.get(0);
+      assertEquals(0, resultChoice.index);
+      assertNotNull(resultChoice.message);
+      assertEquals("Hello world", resultChoice.message.content);
+      assertEquals("source1, source2", resultChoice.message.citation);
+    }
+
+    @Test
+    void shouldHandleMultipleLevelInheritance() {
+      // ExtendedCitedResponse extends CitedResponse extends BaseResponse<CitedMessage>
+      DeltaMerger<ExtendedCitedResponse> merger =
+          new DeltaMerger<>(ExtendedCitedResponse.class);
+
+      ExtendedCitedResponse delta1 = new ExtendedCitedResponse();
+      delta1.id = "ext_1";
+      delta1.metadata = "meta";
+      delta1.choices = new ArrayList<>();
+
+      GenericChoice<CitedMessage> choice1 = new GenericChoice<>();
+      choice1.index = 0;
+      choice1.message = new CitedMessage();
+      choice1.message.content = "Test";
+      delta1.choices.add(choice1);
+
+      merger.applyDelta(delta1);
+
+      ExtendedCitedResponse result = merger.build();
+      assertEquals("ext_1", result.id);
+      assertEquals("meta", result.metadata);
+      assertEquals(1, result.choices.size());
+      assertEquals("Test", result.choices.get(0).message.content);
+    }
+
+    @Test
+    void shouldHandleMultipleTypeParameters() {
+      // MultiTypeResponse extends BaseMultiResponse<KeyItem, ValueItem>
+      DeltaMerger<MultiTypeResponse> merger =
+          new DeltaMerger<>(MultiTypeResponse.class);
+
+      MultiTypeResponse delta1 = new MultiTypeResponse();
+      delta1.keys = new ArrayList<>();
+      delta1.values = new ArrayList<>();
+
+      KeyItem key1 = new KeyItem();
+      key1.index = 0;
+      key1.keyName = "key";
+      delta1.keys.add(key1);
+
+      ValueItem val1 = new ValueItem();
+      val1.index = 0;
+      val1.data = "data";
+      delta1.values.add(val1);
+
+      merger.applyDelta(delta1);
+
+      // 두 번째 델타
+      MultiTypeResponse delta2 = new MultiTypeResponse();
+      delta2.keys = new ArrayList<>();
+      delta2.values = new ArrayList<>();
+
+      KeyItem key2 = new KeyItem();
+      key2.index = 0;
+      key2.keyName = "Name";  // String concatenation
+      delta2.keys.add(key2);
+
+      ValueItem val2 = new ValueItem();
+      val2.index = 0;
+      val2.data = "Value";  // String concatenation
+      delta2.values.add(val2);
+
+      merger.applyDelta(delta2);
+
+      MultiTypeResponse result = merger.build();
+      assertEquals(1, result.keys.size());
+      assertEquals(1, result.values.size());
+      assertEquals("keyName", result.keys.get(0).keyName);
+      assertEquals("dataValue", result.values.get(0).data);
+    }
+  }
+
   // Test DTOs
 
   @Getter @Setter
@@ -740,5 +865,91 @@ class DeltaMergerTest {
   public static class ConventionIndexItem {
     Integer index;  // @StreamIndex 없이 "index" 이름만으로 자동 인식
     String data;
+  }
+
+  // === TypeVariable Resolution Test DTOs ===
+
+  /**
+   * 제네릭 베이스 응답 클래스.
+   * T는 메시지 타입을 나타낸다.
+   */
+  @Getter @Setter
+  public static class BaseResponse<T> {
+    String id;
+    List<GenericChoice<T>> choices;
+  }
+
+  /**
+   * 제네릭 Choice 클래스.
+   * T는 메시지 타입을 나타낸다.
+   */
+  @Getter @Setter
+  public static class GenericChoice<T> {
+    @StreamIndex
+    Integer index;
+    T message;
+  }
+
+  /**
+   * 인용 정보가 포함된 메시지.
+   */
+  @Getter @Setter
+  public static class CitedMessage {
+    String content;
+    String citation;
+  }
+
+  /**
+   * CitedMessage를 사용하는 구체적인 응답 클래스.
+   * BaseResponse<CitedMessage>를 상속.
+   */
+  @Getter @Setter
+  public static class CitedResponse extends BaseResponse<CitedMessage> {
+    // choices는 List<GenericChoice<CitedMessage>>가 됨
+  }
+
+  /**
+   * 다중 레벨 상속 테스트용 클래스.
+   */
+  @Getter @Setter
+  public static class ExtendedCitedResponse extends CitedResponse {
+    String metadata;
+  }
+
+  /**
+   * 다중 타입 파라미터를 가진 베이스 클래스.
+   */
+  @Getter @Setter
+  public static class BaseMultiResponse<K, V> {
+    List<K> keys;
+    List<V> values;
+  }
+
+  /**
+   * 키 아이템.
+   */
+  @Getter @Setter
+  public static class KeyItem {
+    @StreamIndex
+    Integer index;
+    String keyName;
+  }
+
+  /**
+   * 값 아이템.
+   */
+  @Getter @Setter
+  public static class ValueItem {
+    @StreamIndex
+    Integer index;
+    String data;
+  }
+
+  /**
+   * 다중 타입 파라미터를 사용하는 구체적인 응답 클래스.
+   */
+  @Getter @Setter
+  public static class MultiTypeResponse extends BaseMultiResponse<KeyItem, ValueItem> {
+    // keys는 List<KeyItem>, values는 List<ValueItem>이 됨
   }
 }
