@@ -191,6 +191,29 @@ class DeltaMergerTest {
       SimpleDto result = merger.build();
       assertEquals("Hello", result.content);
     }
+
+    @Test
+    void shouldOverwritePrimitiveFields() {
+      // primitive 타입은 null 표현 불가 → 항상 덮어쓰기
+      DeltaMerger<PrimitiveDto> merger = new DeltaMerger<>(PrimitiveDto.class);
+
+      PrimitiveDto delta1 = new PrimitiveDto();
+      delta1.setAge(10);
+      delta1.setScore(3.5);
+      delta1.setActive(true);
+      merger.applyDelta(delta1);
+
+      PrimitiveDto delta2 = new PrimitiveDto();
+      delta2.setAge(5);       // 덮어쓰기 (합산 X)
+      delta2.setScore(1.5);   // 덮어쓰기 (합산 X)
+      delta2.setActive(false);
+      merger.applyDelta(delta2);
+
+      PrimitiveDto result = merger.build();
+      assertEquals(5, result.getAge());             // 덮어쓰기됨
+      assertEquals(1.5, result.getScore(), 0.001);  // 덮어쓰기됨
+      assertFalse(result.isActive());               // 덮어쓰기됨
+    }
   }
 
   @Nested
@@ -338,6 +361,55 @@ class DeltaMergerTest {
       assertEquals("Hello!", result.items.get(0).value);
       assertEquals("World", result.items.get(1).value);
       assertEquals("테스트", result.items.get(2).value);
+    }
+
+    @Test
+    void shouldHandleMultipleItemsInSingleDelta() {
+      // 한 번의 delta에 여러 인덱스의 아이템이 들어오는 경우
+      DeltaMerger<ListContainer> merger = new DeltaMerger<>(ListContainer.class);
+
+      // 첫 delta: index 0, 1, 2 세 개의 아이템이 한꺼번에
+      ListContainer delta1 = new ListContainer();
+      delta1.items = new ArrayList<>();
+
+      IndexedItem item0 = new IndexedItem();
+      item0.index = 0;
+      item0.value = "Hello";
+      delta1.items.add(item0);
+
+      IndexedItem item1 = new IndexedItem();
+      item1.index = 1;
+      item1.value = "World";
+      delta1.items.add(item1);
+
+      IndexedItem item2 = new IndexedItem();
+      item2.index = 2;
+      item2.value = "Test";
+      delta1.items.add(item2);
+
+      merger.applyDelta(delta1);
+
+      // 두 번째 delta: index 0, 2에 추가 (1은 건드리지 않음)
+      ListContainer delta2 = new ListContainer();
+      delta2.items = new ArrayList<>();
+
+      IndexedItem item0_2 = new IndexedItem();
+      item0_2.index = 0;
+      item0_2.value = "!";
+      delta2.items.add(item0_2);
+
+      IndexedItem item2_2 = new IndexedItem();
+      item2_2.index = 2;
+      item2_2.value = "ing";
+      delta2.items.add(item2_2);
+
+      merger.applyDelta(delta2);
+
+      ListContainer result = merger.build();
+      assertEquals(3, result.items.size());
+      assertEquals("Hello!", result.items.get(0).value);
+      assertEquals("World", result.items.get(1).value);  // 변경 없음
+      assertEquals("Testing", result.items.get(2).value);
     }
   }
 
@@ -749,6 +821,17 @@ class DeltaMergerTest {
     String content;
     Integer count;
     Long timestamp;
+  }
+
+  /**
+   * primitive 타입 필드 테스트용 DTO.
+   * int, double, boolean 등 primitive 타입 사용.
+   */
+  @Getter @Setter
+  public static class PrimitiveDto {
+    int age;
+    double score;
+    boolean active;
   }
 
   @Getter @Setter

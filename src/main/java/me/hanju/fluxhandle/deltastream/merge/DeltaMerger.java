@@ -125,8 +125,9 @@ public final class DeltaMerger<T> {
       return;
     }
 
-    // @StreamIndex 또는 @StreamOverwrite 필드는 항상 덮어쓰기
-    if (field.isSpecialKey()) {
+    // @StreamIndex, @StreamOverwrite, 또는 primitive 타입은 항상 덮어쓰기
+    // primitive는 null을 표현할 수 없으므로 "변경 없음"을 구분할 수 없음
+    if (field.isSpecialKey() || field.isPrimitiveType()) {
       acc.put(key, deltaValue);
       return;
     }

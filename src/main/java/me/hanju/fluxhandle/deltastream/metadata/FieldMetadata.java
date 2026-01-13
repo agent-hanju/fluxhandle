@@ -128,6 +128,11 @@ public record FieldMetadata(
           declaringClass, MethodHandles.lookup());
       final MethodHandle handle = lookup.unreflect(accessor);
 
+      // primitive 타입 반환 시 wrapper 타입으로 변환하여 boxing 지원
+      // LambdaMetafactory는 instantiatedMethodType에서 wrapper 타입을 보면 자동 boxing
+      final Class<?> returnType = accessor.getReturnType();
+      final Class<?> boxedReturnType = box(returnType);
+
       // LambdaMetafactory로 고성능 Function 생성
       final CallSite site = LambdaMetafactory.metafactory(
           lookup,
@@ -135,7 +140,7 @@ public record FieldMetadata(
           MethodType.methodType(Function.class),
           MethodType.methodType(Object.class, Object.class),  // SAM 시그니처
           handle,                                              // direct 핸들
-          handle.type()                                        // 실제 시그니처
+          MethodType.methodType(boxedReturnType, declaringClass) // boxing 적용 시그니처
       );
 
       return (Function<Object, Object>) site.getTarget().invokeExact();
@@ -166,6 +171,11 @@ public record FieldMetadata(
           declaringClass, MethodHandles.lookup());
       final MethodHandle handle = lookup.unreflect(setterMethod);
 
+      // primitive 타입 파라미터 시 wrapper 타입으로 변환하여 unboxing 지원
+      // LambdaMetafactory는 instantiatedMethodType에서 wrapper 타입을 보면 자동 unboxing
+      final Class<?> paramType = setterMethod.getParameterTypes()[0];
+      final Class<?> boxedParamType = box(paramType);
+
       // BiConsumer로 생성: (Object target, Object value) -> void
       final CallSite site = LambdaMetafactory.metafactory(
           lookup,
@@ -173,7 +183,7 @@ public record FieldMetadata(
           MethodType.methodType(BiConsumer.class),
           MethodType.methodType(void.class, Object.class, Object.class),
           handle,
-          handle.type()
+          MethodType.methodType(void.class, declaringClass, boxedParamType) // unboxing 적용 시그니처
       );
 
       return (BiConsumer<Object, Object>) site.getTarget().invokeExact();
@@ -250,6 +260,14 @@ public record FieldMetadata(
   }
 
   /**
+   * primitive 타입인지 확인 (int, long, double, float, boolean 등).
+   * primitive 필드는 null을 표현할 수 없으므로 병합 시 항상 덮어쓰기된다.
+   */
+  public boolean isPrimitiveType() {
+    return fieldType.isPrimitive();
+  }
+
+  /**
    * 복합 객체 타입인지 확인 (기본 타입도 아니고 List도 아닌 것).
    * 객체 필드는 재귀적으로 병합된다.
    */
@@ -323,5 +341,29 @@ public record FieldMetadata(
       return java.util.Map.of();
     }
     return TypeVariableResolver.extractBindingsFromType(resolvedElementType);
+  }
+
+  /**
+   * primitive 타입을 wrapper 타입으로 변환한다.
+   * LambdaMetafactory에서 boxing/unboxing을 지원하려면
+   * instantiatedMethodType에 wrapper 타입을 명시해야 한다.
+   *
+   * @param type 변환할 타입
+   * @return wrapper 타입, primitive가 아니면 원본 반환
+   */
+  private static Class<?> box(final Class<?> type) {
+    if (!type.isPrimitive()) {
+      return type;
+    }
+    if (type == int.class) return Integer.class;
+    if (type == long.class) return Long.class;
+    if (type == double.class) return Double.class;
+    if (type == float.class) return Float.class;
+    if (type == boolean.class) return Boolean.class;
+    if (type == byte.class) return Byte.class;
+    if (type == short.class) return Short.class;
+    if (type == char.class) return Character.class;
+    if (type == void.class) return Void.class;
+    return type;
   }
 }

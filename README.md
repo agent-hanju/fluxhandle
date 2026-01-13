@@ -27,7 +27,7 @@ repositories {
 
 ```groovy
 dependencies {
-    implementation 'com.github.agent-hanju:fluxhandle:0.3.0'
+    implementation 'com.github.agent-hanju:fluxhandle:0.3.2'
 }
 ```
 
@@ -162,11 +162,14 @@ DeltaMapper<String, String> lineMapper = new DeltaMapper<>() {
 지원하는 병합 규칙:
 
 - **String** - 연결 (concatenation)
-- **Number** - 합산 (addition)
+- **Number (래퍼 타입)** - 합산 (Integer, Long, Double 등)
+- **Primitive 타입** - 덮어쓰기 (int, long, double, boolean 등)
 - **Object** - 재귀적 병합
 - **Primitive List** - 확장 (extend)
 - **Object List** - `index` 필드 기반 그룹화 후 병합
 - **커스텀 merge 메서드** - 클래스에 `T merge(T delta)` 메서드 정의 시 자동 사용
+
+> **Note**: primitive 타입(`int`, `long`, `double`, `boolean` 등)은 null을 표현할 수 없어 "변경 없음"을 구분할 수 없습니다. 따라서 항상 덮어쓰기됩니다. 합산이 필요하면 래퍼 타입(`Integer`, `Long`, `Double`)을 사용하세요.
 
 ```java
 // 커스텀 병합 로직 예제
