@@ -1,10 +1,11 @@
 # FluxHandle
 
-리액티브 스트림을 위한 경량 스트리밍 툴킷. 델타 병합과 리스너 기반 콜백을 지원합니다.
+리액티브 스트림을 위한 경량 스트리밍 툴킷. 델타 변환, 병합과 리스너 기반 콜백을 지원합니다.
 
 ## 주요 기능
 
-- **FluxHandle / DirectHandle** - `Flux` 스트림 구독 또는 수동 emit으로 리스너 기반 콜백 처리
+- **SimpleFluxHandle** - 입력과 결과 타입이 동일한 단순 스트리밍 (`T → T`)
+- **FluxHandle** - 델타 변환이 필요한 스트리밍 (`T → R`, `DeltaMapper` 사용)
 - **DeltaStream** - 리플렉션 기반 델타 병합 (AI 채팅 응답, 증분 업데이트 등)
 - `get()` 또는 `get(timeout, unit)`으로 동기 결과 조회
 - `cancel()`로 취소 지원
@@ -32,18 +33,39 @@ dependencies {
 
 ## 빠른 시작
 
-### 기본 FluxHandle 사용법
+### SimpleFluxHandle - 단순 스트리밍
+
+입력 타입과 결과 타입이 동일한 경우 사용:
 
 ```java
 Flux<String> flux = Flux.just("Hello", " ", "World");
 
-FluxHandle<String, String> handle = new FluxHandle<>(
+SimpleFluxHandle<String> handle = new SimpleFluxHandle<>(
     flux,
-    DeltaMerger.stringMerger(),
+    String.class,
     item -> System.out.println("수신: " + item)
 );
 
 String result = handle.get();  // "Hello World"
+```
+
+### FluxHandle - 델타 변환 스트리밍
+
+SDK 응답을 도메인 객체로 변환하는 경우:
+
+```java
+// DeltaMapper로 변환 로직 정의 (0:N 매핑 지원)
+DeltaMapper<SdkChunk, MyDelta> mapper = chunk ->
+    List.of(new MyDelta(chunk.getContent(), chunk.getIndex()));
+
+FluxHandle<SdkChunk, MyDelta> handle = new FluxHandle<>(
+    sdkStream,
+    mapper,
+    MyDelta.class,
+    delta -> System.out.println("변환된 델타: " + delta)
+);
+
+MyDelta result = handle.get();
 ```
 
 ### 복잡한 객체의 델타 병합
@@ -52,79 +74,129 @@ AI 채팅 응답처럼 객체가 증분 델타로 도착하는 스트리밍 시�
 
 ```java
 // 스트리밍 객체 정의
+public class ChatCompletionChunk {
+    private List<ChatChoice> choices;  // choices 안의 index 필드로 자동 병합
+}
+
 public class ChatChoice {
     private Integer index;  // index 필드 자동 감지
     private ChatMessage message;
 }
 
-// 델타를 완전한 객체로 병합
-DeltaMerger<ChatChoice> merger = DeltaMerger.create(ChatChoice.class);
-
-FluxHandle<ChatChoice, List<ChatChoice>> handle = new FluxHandle<>(
+// SimpleFluxHandle 생성 - 자동으로 델타 병합 수행
+SimpleFluxHandle<ChatCompletionChunk> handle = new SimpleFluxHandle<>(
     chatStream,
-    merger,
-    choice -> System.out.println("델타: " + choice)
+    ChatCompletionChunk.class,
+    chunk -> System.out.println("델타: " + chunk)
 );
 
-List<ChatChoice> choices = handle.get();  // 완전히 병합된 choices
+ChatCompletionChunk result = handle.get();  // 완전히 병합된 결과
 ```
 
 ## 구성 요소
 
-### Handle 인터페이스
+### IFluxHandle 인터페이스
 
-모든 handle 구현체의 공통 인터페이스:
+모든 handle 구현체의 공통 인터페이스 (`IFluxHandle<T, R>`):
 
 - `get()` / `get(timeout, unit)` - 블로킹 후 결과 조회
 - `cancel()` - 스트리밍 취소
 - `isCancelled()` / `isError()` / `getError()` - 상태 확인
 
-### FluxHandle<T, R>
+### SimpleFluxHandle\<T\>
 
-`Flux<T>`를 래핑하고 스트리밍 생명주기를 관리. 생성 시 즉시 구독됨.
-
-### DirectHandle<T, R>
-
-`Flux` 소스 없이 직접 항목을 emit:
+입력과 결과 타입이 동일한 경우(`T == T`) 사용. `Flux<T>`를 래핑하고 스트리밍 생명주기를 관리. 생성 시 즉시 구독되며, 내부적으로 `DeltaMerger`를 생성하여 자동 델타 병합을 수행.
 
 ```java
-DirectHandle<String, String> handle = new DirectHandle<>(
-    DeltaMerger.stringMerger(),
+SimpleFluxHandle<String> handle = new SimpleFluxHandle<>(
+    flux,
+    String.class,
     listener
 );
-
-handle.onNext("first");
-handle.onNext("second");
-handle.onComplete();
-
-String result = handle.get();  // "firstsecond"
 ```
 
-### DeltaMerger<T>
+### FluxHandle\<T, R\>
 
-스트리밍 델타를 완전한 객체로 병합. 지원 기능:
-
-- **기본 타입** - 문자열, 숫자 (연결/덧셈)
-- **인덱스 객체** - `index` 필드가 있는 객체는 그룹화 후 병합
-- **중첩 객체** - 재귀적 병합
-- **커스텀 merge 메서드** - `T merge(T delta)` 정의로 커스텀 로직 사용
+입력 타입 `T`를 결과 타입 `R`로 변환해야 하는 경우 사용. `DeltaMapper`를 통해 각 델타를 변환한 후 병합.
 
 ```java
-// 단순 문자열 연결
-DeltaMerger<String> stringMerger = DeltaMerger.stringMerger();
-
-// 인덱스 기반 그룹화가 필요한 복잡한 객체
-DeltaMerger<MyClass> merger = DeltaMerger.create(MyClass.class);
+FluxHandle<SdkChunk, MyDelta> handle = new FluxHandle<>(
+    flux,
+    mapper,      // DeltaMapper<T, R>
+    MyDelta.class,
+    listener
+);
 ```
 
-### FluxListener<T>
+### DeltaMapper\<T, R\>
 
-스트리밍 이벤트 수신 인터페이스:
+상태를 가질 수 있는 델타 변환 인터페이스. 0:N 매핑을 지원하여 필터링, 버퍼링, 분할이 가능:
 
-- `onNext(T item)` - 각 항목 emit 시 호출
+```java
+// 1:1 변환
+DeltaMapper<SdkChunk, MyDelta> mapper = chunk ->
+    List.of(new MyDelta(chunk.getContent()));
+
+// 버퍼링 (줄 단위 분할)
+DeltaMapper<String, String> lineMapper = new DeltaMapper<>() {
+    private final StringBuilder buffer = new StringBuilder();
+
+    @Override
+    public List<String> map(String chunk) {
+        buffer.append(chunk);
+        List<String> lines = new ArrayList<>();
+        int idx;
+        while ((idx = buffer.indexOf("\n")) >= 0) {
+            lines.add(buffer.substring(0, idx));
+            buffer.delete(0, idx + 1);
+        }
+        return lines;  // 0개 또는 N개 반환
+    }
+};
+```
+
+### DeltaMerger\<T\>
+
+스트리밍 델타를 완전한 객체로 병합하는 내부 컴포넌트. `FluxHandle`과 `SimpleFluxHandle`이 생성 시 자동으로 생성하므로 직접 다룰 필요가 없습니다.
+
+지원하는 병합 규칙:
+
+- **String** - 연결 (concatenation)
+- **Number** - 합산 (addition)
+- **Object** - 재귀적 병합
+- **Primitive List** - 확장 (extend)
+- **Object List** - `index` 필드 기반 그룹화 후 병합
+- **커스텀 merge 메서드** - 클래스에 `T merge(T delta)` 메서드 정의 시 자동 사용
+
+```java
+// 커스텀 병합 로직 예제
+public class ChatMessage {
+    private String content;
+
+    // 이 메서드가 있으면 자동으로 사용됨
+    public ChatMessage merge(ChatMessage delta) {
+        if (delta.content != null) {
+            this.content = (this.content == null ? "" : this.content) + delta.content;
+        }
+        return this;
+    }
+}
+```
+
+### FluxListener\<R\>
+
+스트리밍 이벤트 수신 인터페이스. 함수형 인터페이스로 간단한 람다 사용 가능:
+
+```java
+FluxListener<String> listener = item -> System.out.println("수신: " + item);
+```
+
+전체 이벤트를 처리하려면:
+
+- `onNext(R item)` - 각 항목 emit 시 호출 (필수)
 - `onError(Throwable e)` - 에러 발생 시 호출 (기본: 경고 로그)
-- `onComplete()` - 정상 완료 시 호출
-- `onCancel()` - 취소 시 호출
+- `onComplete()` - 정상 완료 시 호출 (기본: 빈 구현)
+- `onCancel()` - 취소 시 호출 (기본: 빈 구현)
 
 ## DeltaStream 패키지
 
@@ -179,10 +251,10 @@ if (handle.isError()) {
 
 모든 예외는 `FluxHandleException`을 상속:
 
-- `FluxAssemblerException` - assembler 작업 오류
+- `FluxHandleException` - 일반적인 handle 작업 오류
 - `FluxListenerException` - 리스너 콜백 오류
 - `MergeException` - 델타 병합 오류
-- `MetadataException` - 메타데이터 처리 오류
+- `MetadataException` - 메타데이터 처리 오류 (리플렉션 실패 등)
 
 ## 요구 사항
 
@@ -193,7 +265,7 @@ if (handle.isError()) {
 
 ### 0.2.x → 0.3.0
 
-`FluxAssembler` 인터페이스가 `DeltaMerger`로 교체되었습니다.
+`FluxAssembler` 인터페이스가 `DeltaMerger`로 교체되고, 클래스 구조가 변경되었습니다.
 
 **Before (0.2.x):**
 ```java
@@ -218,12 +290,28 @@ FluxHandle<String, String> handle = new FluxHandle<>(
 
 **After (0.3.0):**
 ```java
-FluxHandle<String, String> handle = new FluxHandle<>(
+// 입력 == 결과 타입인 경우: SimpleFluxHandle 사용
+SimpleFluxHandle<String> handle = new SimpleFluxHandle<>(
     flux,
-    DeltaMerger.stringMerger(),
+    String.class,
+    listener
+);
+
+// 변환이 필요한 경우: FluxHandle + DeltaMapper 사용
+FluxHandle<Input, Output> handle = new FluxHandle<>(
+    flux,
+    input -> List.of(transform(input)),  // DeltaMapper
+    Output.class,
     listener
 );
 ```
+
+주요 변화:
+- `Handle` → `IFluxHandle` (인터페이스 리네임)
+- `DirectHandle` → `SimpleFluxHandle` (클래스 리네임 + 역할 변경)
+- `FluxHandle<T>` → `FluxHandle<T, R>` (변환 기능 추가)
+- 단순 케이스(`T == T`)는 `SimpleFluxHandle` 사용
+- 변환 케이스(`T → R`)는 `FluxHandle` + `DeltaMapper` 사용
 
 ## 라이선스
 
