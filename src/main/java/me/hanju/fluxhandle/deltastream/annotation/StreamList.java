@@ -15,12 +15,12 @@ import java.lang.annotation.Target;
  * <li>요소 객체에 StreamIndex가 설정되어있을 경우 그 설정을 무시합니다.</li>
  * </ul>
  *
- * <pre>
+ * <pre>{@code
  * public class Response {
- *   &#64;StreamList(index = "seq") // ExternalItem.seq를 인덱스 필드로 사용
- *   private List&ltExternalItem&gt items;
+ *   @StreamList(index = "seq") // ExternalItem.seq를 인덱스 필드로 사용
+ *   private List<ExternalItem> items;
  * }
- * </pre>
+ * }</pre>
  *
  * @see StreamIndex 요소 클래스 내부에서 인덱스 필드 지정
  */

@@ -11,19 +11,19 @@ import java.lang.annotation.Target;
  * <p>
  * {@code null} 값은 무시되며 기존 값이 유지됩니다.
  *
- * <pre>
+ * <pre>{@code
  * public class Calling {
- *   &#64;StreamOverwrite
+ *   @StreamOverwrite
  *   private String type; // 덮어쓰기 적용
  *
  *   private String args; // 연결 유지
  * }
  *
  * public class Snapshot {
- *   &#64;StreamOverwrite
+ *   @StreamOverwrite
  *   private List<Item> items; // 항상 전체 교체
  * }
- * </pre>
+ * }</pre>
  */
 @Target({ ElementType.FIELD, ElementType.TYPE })
 @Retention(RetentionPolicy.RUNTIME)
