@@ -131,7 +131,43 @@ public final class ObjectBuilder {
       return resolveObjectList(field, list);
     }
 
+    // List -> Array 변환 (병합 중 List로 저장되었던 것을 Array로 변환)
+    if (value instanceof List<?> list && field.isArray()) {
+      return resolveArrayField(field, list);
+    }
+
+    // Map<String, Map> -> Map<String, 객체> 변환 (재귀)
+    if (value instanceof Map<?, ?> map && field.isObjectValueMap()) {
+      return resolveObjectValueMap(field, (Map<String, Object>) map);
+    }
+
     return value;
+  }
+
+  /**
+   * 객체 value Map의 각 value를 실제 객체로 변환한다.
+   */
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> resolveObjectValueMap(
+      final FieldMetadata field,
+      final Map<String, Object> map) {
+
+    final Map<String, Type> valueBindings = field.getElementTypeBindings();
+    final Class<?> valueClass = field.getResolvedElementClass();
+
+    final Map<String, Object> resolvedMap = new HashMap<>();
+    for (final Map.Entry<String, Object> entry : map.entrySet()) {
+      final Object value = entry.getValue();
+      if (value instanceof Map<?, ?> valueMap) {
+        // Map -> 객체로 변환 (바인딩과 함께)
+        resolvedMap.put(entry.getKey(),
+            build(valueClass, (Map<String, Object>) valueMap, valueBindings));
+      } else {
+        // 이미 객체면 그대로
+        resolvedMap.put(entry.getKey(), value);
+      }
+    }
+    return resolvedMap;
   }
 
   /**
@@ -154,6 +190,112 @@ public final class ObjectBuilder {
       }
     }
     return resolvedList;
+  }
+
+  /**
+   * List를 Array로 변환한다.
+   * 병합 중 List로 저장되었던 데이터를 실제 Array 타입으로 변환한다.
+   */
+  @SuppressWarnings("unchecked")
+  private static Object resolveArrayField(final FieldMetadata field, final List<?> list) {
+    final Class<?> componentType = field.elementType();
+
+    // primitive 배열: 특별 처리 필요
+    if (componentType.isPrimitive()) {
+      return resolvePrimitiveArray(list, componentType);
+    }
+
+    // 객체 배열
+    final Object array = java.lang.reflect.Array.newInstance(componentType, list.size());
+
+    if (field.isObjectArray()) {
+      // 객체 배열: Map -> 객체 변환
+      final Map<String, Type> elementBindings = field.getElementTypeBindings();
+      final Class<?> elementClass = field.getResolvedElementClass();
+
+      for (int i = 0; i < list.size(); i++) {
+        final Object item = list.get(i);
+        if (item instanceof Map<?, ?> itemMap) {
+          final Object resolved = build(elementClass, (Map<String, Object>) itemMap, elementBindings);
+          java.lang.reflect.Array.set(array, i, resolved);
+        } else {
+          java.lang.reflect.Array.set(array, i, item);
+        }
+      }
+    } else {
+      // primitive wrapper 배열 (String[], Integer[] 등)
+      for (int i = 0; i < list.size(); i++) {
+        java.lang.reflect.Array.set(array, i, list.get(i));
+      }
+    }
+
+    return array;
+  }
+
+  /**
+   * List를 primitive 배열로 변환한다.
+   */
+  private static Object resolvePrimitiveArray(final List<?> list, final Class<?> componentType) {
+    final int size = list.size();
+
+    if (componentType == int.class) {
+      final int[] array = new int[size];
+      for (int i = 0; i < size; i++) {
+        array[i] = ((Number) list.get(i)).intValue();
+      }
+      return array;
+    }
+    if (componentType == long.class) {
+      final long[] array = new long[size];
+      for (int i = 0; i < size; i++) {
+        array[i] = ((Number) list.get(i)).longValue();
+      }
+      return array;
+    }
+    if (componentType == double.class) {
+      final double[] array = new double[size];
+      for (int i = 0; i < size; i++) {
+        array[i] = ((Number) list.get(i)).doubleValue();
+      }
+      return array;
+    }
+    if (componentType == float.class) {
+      final float[] array = new float[size];
+      for (int i = 0; i < size; i++) {
+        array[i] = ((Number) list.get(i)).floatValue();
+      }
+      return array;
+    }
+    if (componentType == boolean.class) {
+      final boolean[] array = new boolean[size];
+      for (int i = 0; i < size; i++) {
+        array[i] = (Boolean) list.get(i);
+      }
+      return array;
+    }
+    if (componentType == byte.class) {
+      final byte[] array = new byte[size];
+      for (int i = 0; i < size; i++) {
+        array[i] = ((Number) list.get(i)).byteValue();
+      }
+      return array;
+    }
+    if (componentType == short.class) {
+      final short[] array = new short[size];
+      for (int i = 0; i < size; i++) {
+        array[i] = ((Number) list.get(i)).shortValue();
+      }
+      return array;
+    }
+    if (componentType == char.class) {
+      final char[] array = new char[size];
+      for (int i = 0; i < size; i++) {
+        array[i] = (Character) list.get(i);
+      }
+      return array;
+    }
+
+    throw new MergeException("Unsupported primitive array type: " + componentType, null);
   }
 
   /**

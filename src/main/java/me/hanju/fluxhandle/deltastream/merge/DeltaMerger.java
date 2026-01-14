@@ -1,6 +1,5 @@
 package me.hanju.fluxhandle.deltastream.merge;
 
-import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -14,7 +13,35 @@ import me.hanju.fluxhandle.deltastream.metadata.TypeMetadataCache.TypeInfo;
 /**
  * 델타 스트리밍 객체를 하나의 누적된 결과로 병합하는 클래스
  *
+ * <h2>기본 사용법</h2>
+ *
+ * <pre>{@code
+ * DeltaMerger<ChatCompletionChunk> merger = new DeltaMerger<>(ChatCompletionChunk.class);
+ *
+ * for (ChatCompletionChunk delta : stream) {
+ *   merger.applyDelta(delta);
+ * }
+ *
+ * ChatCompletionChunk result = merger.build();
+ * }</pre>
+ *
+ * <h2>병합 규칙</h2>
+ * <ul>
+ * <li>원시값: 대체</li>
+ * <li>{@code String}: 연결 (concatenation)</li>
+ * <li>{@code Number}: 합산 (addition)</li>
+ * <li>객체: 재귀적 병합({@code T merge(T)} 지원)</li>
+ * <li>{@code List/Array}: index 기반 병합 또는 append</li>
+ * <li>{@code Map}: key 기반 병합</li>
+ * </ul>
+ *
+ * <p>
+ * 자세한 내용은 {@code deltastream} 패키지의 README.md를 참조하세요.
+ *
  * @param <T> 병합할 델타 객체의 타입
+ * @see me.hanju.fluxhandle.deltastream.annotation.StreamIndex
+ * @see me.hanju.fluxhandle.deltastream.annotation.StreamList
+ * @see me.hanju.fluxhandle.deltastream.annotation.StreamOverwrite
  */
 public final class DeltaMerger<T> {
 
@@ -34,7 +61,6 @@ public final class DeltaMerger<T> {
       throw new IllegalArgumentException("type cannot be null");
     }
     this.type = type;
-    // 캐시에서 타입 메타데이터 조회 (한 번만 리플렉션 수행)
     this.typeInfo = TypeMetadataCache.getTypeInfo(type);
     this.mergingMap = new HashMap<>();
     this.merged = null;
@@ -49,10 +75,10 @@ public final class DeltaMerger<T> {
     if (delta == null) {
       return;
     }
-    if (typeInfo.hasCustomMerge()) {
-      applyCustomMerge(delta);
+    if (this.typeInfo.hasCustomMerge()) {
+      this.applyCustomMerge(delta);
     } else {
-      mergeIntoMap(this.mergingMap, delta, this.typeInfo);
+      this.mergeIntoMap(this.mergingMap, delta, this.typeInfo);
     }
   }
 
@@ -62,38 +88,29 @@ public final class DeltaMerger<T> {
    * @return 병합된 결과 객체
    */
   public T build() {
-    if (typeInfo.hasCustomMerge()) {
-      return merged;
+    if (this.typeInfo.hasCustomMerge()) {
+      return this.merged;
     }
     return ObjectBuilder.build(this.type, this.mergingMap);
   }
 
-  /**
-   * 커스텀 merge 메서드를 사용하여 병합한다.
-   * 첫 번째 델타는 그대로 저장하고, 이후부터 merge 호출.
-   */
+  // ========== 커스텀 merge 처리 ==========
+
   @SuppressWarnings("unchecked")
   private void applyCustomMerge(final T delta) {
-    if (merged == null) {
-      // 첫 델타: 그대로 저장
-      merged = delta;
+    if (this.merged == null) {
+      this.merged = delta;
     } else {
-      // 이후 델타: merge 메서드 호출
       try {
-        merged = (T) typeInfo.merge(merged, delta);
+        this.merged = (T) this.typeInfo.merge(this.merged, delta);
       } catch (final Exception e) {
         throw new MergeException("merge method invocation failed", e);
       }
     }
   }
 
-  /**
-   * 델타 객체의 필드들을 Map에 병합한다.
-   *
-   * @param acc   누적 Map
-   * @param delta 병합할 델타 객체
-   * @param info  타입 메타데이터
-   */
+  // ========== 핵심 병합 로직 ==========
+
   private void mergeIntoMap(
       final Map<String, Object> acc,
       final Object delta,
@@ -101,16 +118,12 @@ public final class DeltaMerger<T> {
 
     for (final FieldMetadata field : info.fields()) {
       final Object deltaValue = field.getValue(delta);
-      // null 값은 무시 (스트리밍에서 "변경 없음"을 의미)
       if (deltaValue != null) {
-        mergeField(acc, field, deltaValue);
+        this.mergeField(acc, field, deltaValue);
       }
     }
   }
 
-  /**
-   * 단일 필드를 병합한다.
-   */
   private void mergeField(
       final Map<String, Object> acc,
       final FieldMetadata field,
@@ -119,158 +132,319 @@ public final class DeltaMerger<T> {
     final String key = field.fieldName();
     final Object accValue = acc.get(key);
 
-    // 누적 값이 없으면 델타 값을 복사하여 저장
     if (accValue == null) {
-      acc.put(key, cloneValue(deltaValue, field));
+      acc.put(key, this.cloneValue(deltaValue, field));
       return;
     }
 
-    // @StreamIndex, @StreamOverwrite, 또는 primitive 타입은 항상 덮어쓰기
-    // primitive는 null을 표현할 수 없으므로 "변경 없음"을 구분할 수 없음
     if (field.isSpecialKey() || field.isPrimitiveType()) {
       acc.put(key, deltaValue);
       return;
     }
 
-    // 타입별 병합 규칙 적용
-    final Object mergedValue = computeMergedValue(field, accValue, deltaValue);
-    acc.put(key, mergedValue);
+    acc.put(key, this.computeMergedValue(field, accValue, deltaValue));
   }
 
-  /**
-   * 필드 타입에 따라 적절한 병합 연산을 수행한다.
-   */
+  @SuppressWarnings("unchecked")
   private Object computeMergedValue(
       final FieldMetadata field,
       final Object accValue,
       final Object deltaValue) {
 
-    // String: 연결 (concatenation)
     if (field.isString() && deltaValue instanceof String deltaStr) {
       return (String) accValue + deltaStr;
     }
 
-    // Number: 합산 (addition)
     if (field.isNumber() && deltaValue instanceof Number deltaNum) {
       return sumNumbers((Number) accValue, deltaNum);
     }
 
-    // Object: 재귀적 병합
-    if (field.isObject() && accValue instanceof Map) {
-      mergeNestedObject(field, accValue, deltaValue);
-      return accValue;
+    if (field.isObject()) {
+      return this.mergeNestedObject(field, accValue, deltaValue);
     }
 
-    // List: 확장 또는 index 기반 병합
     if (field.isList() && accValue instanceof List && deltaValue instanceof List) {
-      mergeListField(field, accValue, deltaValue);
+      this.mergeCollection((List<Object>) accValue, (List<?>) deltaValue, field);
       return accValue;
     }
 
-    // 그 외: 덮어쓰기
+    if (field.isArray() && accValue instanceof List && deltaValue.getClass().isArray()) {
+      this.mergeCollection((List<Object>) accValue, arrayToList(deltaValue), field);
+      return accValue;
+    }
+
+    if (field.isMap() && accValue instanceof Map && deltaValue instanceof Map) {
+      this.mergeMapField((Map<String, Object>) accValue, (Map<String, Object>) deltaValue, field);
+      return accValue;
+    }
+
     return deltaValue;
   }
 
-  /**
-   * 중첩 객체를 재귀적으로 병합한다.
-   */
+  // ========== 중첩 객체 병합 ==========
+
   @SuppressWarnings("unchecked")
-  private void mergeNestedObject(
+  private Object mergeNestedObject(
       final FieldMetadata field,
       final Object accValue,
       final Object deltaValue) {
 
-    final Map<String, Object> accMap = (Map<String, Object>) accValue;
-    // 해석된 필드 타입과 바인딩 사용 (TypeVariable 해석)
-    final Class<?> resolvedClass = field.getResolvedFieldClass();
-    final Map<String, Type> fieldBindings = field.getFieldTypeBindings();
-    final TypeInfo nestedInfo = TypeMetadataCache.getTypeInfo(resolvedClass, fieldBindings);
-    mergeIntoMap(accMap, deltaValue, nestedInfo);
+    final TypeInfo nestedInfo = field.getFieldTypeInfo();
+
+    if (nestedInfo.hasCustomMerge() && !(accValue instanceof Map)) {
+      try {
+        return nestedInfo.merge(accValue, deltaValue);
+      } catch (final Exception e) {
+        throw new MergeException("nested merge method invocation failed", e);
+      }
+    }
+
+    this.mergeIntoMap((Map<String, Object>) accValue, deltaValue, nestedInfo);
+    return accValue;
   }
 
-  /**
-   * List 필드를 병합한다.
-   */
-  @SuppressWarnings("unchecked")
-  private void mergeListField(
-      final FieldMetadata field,
-      final Object accValue,
-      final Object deltaValue) {
+  // ========== 컬렉션(List/Array) 병합 ==========
 
-    final List<Object> accList = (List<Object>) accValue;
-    mergeList(accList, (List<?>) deltaValue, field);
-  }
-
-  /**
-   * List를 병합한다.
-   * - 기본 타입 List: 단순 확장 (addAll)
-   * - 객체 List: index 기반 병합
-   */
-  private void mergeList(
+  private void mergeCollection(
       final List<Object> accList,
       final List<?> deltaList,
       final FieldMetadata field) {
 
-    // 기본 타입 List: 뒤에 추가
-    if (field.isPrimitiveList()) {
+    if (field.isPrimitiveList() || field.isPrimitiveArray()) {
       accList.addAll(deltaList);
       return;
     }
 
-    // 객체 List: index 기반 병합
-    // 해석된 요소 타입의 바인딩을 가져옴 (TypeVariable 해석)
-    final Map<String, Type> elementBindings = field.getElementTypeBindings();
-    final Class<?> elementClass = field.getResolvedElementClass();
+    final TypeInfo elementInfo = field.getElementTypeInfo();
+    final String indexFieldName = this.resolveIndexFieldName(field, elementInfo);
 
-    final TypeInfo elementInfo = TypeMetadataCache.getTypeInfo(elementClass, elementBindings);
-    final String indexFieldName = elementInfo.indexFieldName();
-
-    // 객체 List는 반드시 index 필드가 있어야 함
     if (indexFieldName == null) {
-      throw new MergeException(
-          "index field required for object list element: " + elementClass.getName()
-              + ". Use @StreamIndex annotation or add an 'index' field.",
-          null);
+      for (final Object deltaItem : deltaList) {
+        accList.add(this.toMergingMap(deltaItem, elementInfo));
+      }
+      return;
     }
 
-    // 각 델타 아이템을 index로 찾아서 병합
     for (final Object deltaItem : deltaList) {
-      mergeObjectListItem(accList, deltaItem, elementInfo, indexFieldName);
+      this.mergeObjectListItem(accList, deltaItem, elementInfo, indexFieldName);
     }
   }
 
-  /**
-   * 객체 List의 단일 아이템을 index 기반으로 병합한다.
-   */
+  private String resolveIndexFieldName(final FieldMetadata field, final TypeInfo elementInfo) {
+    final String listIndexFieldName = field.listIndexFieldName();
+
+    if (listIndexFieldName != null) {
+      final FieldMetadata indexField = elementInfo.findField(listIndexFieldName);
+      if (indexField != null && isIntegerType(indexField.fieldType())) {
+        return listIndexFieldName;
+      }
+      return null;
+    }
+
+    return elementInfo.indexFieldName();
+  }
+
   private void mergeObjectListItem(
       final List<Object> accList,
       final Object deltaItem,
       final TypeInfo elementInfo,
       final String indexFieldName) {
 
-    // 델타 아이템의 index 값 추출
-    final Integer indexValue = getIndexValue(deltaItem, elementInfo);
+    final Integer indexValue = getIndexValue(deltaItem, elementInfo, indexFieldName);
 
-    // 누적 List에서 같은 index를 가진 아이템 찾기
-    final Optional<Map<String, Object>> existingItem = findByIndex(accList, indexFieldName, indexValue);
+    if (elementInfo.hasCustomMerge()) {
+      this.mergeCustomMergeListItem(accList, deltaItem, elementInfo, indexFieldName, indexValue);
+      return;
+    }
 
-    // 없으면 새 Map 추가, 있으면 기존 Map에 병합
-    final Map<String, Object> accItem = existingItem.orElseGet(() -> {
-      final Map<String, Object> newItem = new HashMap<>();
-      accList.add(newItem);
-      return newItem;
-    });
+    final Map<String, Object> accItem = findMapByIndex(accList, indexFieldName, indexValue)
+        .orElseGet(() -> {
+          final Map<String, Object> newItem = new HashMap<>();
+          accList.add(newItem);
+          return newItem;
+        });
 
-    mergeIntoMap(accItem, deltaItem, elementInfo);
+    this.mergeIntoMap(accItem, deltaItem, elementInfo);
+  }
+
+  private void mergeCustomMergeListItem(
+      final List<Object> accList,
+      final Object deltaItem,
+      final TypeInfo elementInfo,
+      final String indexFieldName,
+      final Integer indexValue) {
+
+    final int existingIndex = findObjectIndexByValue(accList, elementInfo, indexFieldName, indexValue);
+
+    if (existingIndex < 0) {
+      accList.add(deltaItem);
+    } else {
+      try {
+        final Object accItem = accList.get(existingIndex);
+        accList.set(existingIndex, elementInfo.merge(accItem, deltaItem));
+      } catch (final Exception e) {
+        throw new MergeException("list element merge method invocation failed", e);
+      }
+    }
+  }
+
+  // ========== Map 병합 ==========
+
+  @SuppressWarnings("unchecked")
+  private void mergeMapField(
+      final Map<String, Object> accMap,
+      final Map<String, Object> deltaMap,
+      final FieldMetadata field) {
+
+    if (field.isPrimitiveValueMap()) {
+      this.mergePrimitiveValueMap(accMap, deltaMap);
+      return;
+    }
+
+    final TypeInfo valueInfo = field.getElementTypeInfo();
+
+    for (final Map.Entry<String, Object> entry : deltaMap.entrySet()) {
+      final String key = entry.getKey();
+      final Object deltaItem = entry.getValue();
+
+      if (deltaItem == null) {
+        continue;
+      }
+
+      final Object accItem = accMap.get(key);
+
+      if (accItem == null) {
+        accMap.put(key, this.toMergingMap(deltaItem, valueInfo));
+      } else if (accItem instanceof Map) {
+        this.mergeIntoMap((Map<String, Object>) accItem, deltaItem, valueInfo);
+      } else {
+        accMap.put(key, deltaItem);
+      }
+    }
+  }
+
+  private void mergePrimitiveValueMap(
+      final Map<String, Object> accMap,
+      final Map<String, Object> deltaMap) {
+
+    for (final Map.Entry<String, Object> entry : deltaMap.entrySet()) {
+      final String key = entry.getKey();
+      final Object deltaValue = entry.getValue();
+
+      if (deltaValue == null) {
+        continue;
+      }
+
+      final Object accValue = accMap.get(key);
+
+      if (accValue == null) {
+        accMap.put(key, deltaValue);
+      } else if (accValue instanceof String accStr && deltaValue instanceof String deltaStr) {
+        accMap.put(key, accStr + deltaStr);
+      } else if (accValue instanceof Number accNum && deltaValue instanceof Number deltaNum) {
+        accMap.put(key, sumNumbers(accNum, deltaNum));
+      } else {
+        accMap.put(key, deltaValue);
+      }
+    }
+  }
+
+  // ========== 값 복제 ==========
+
+  @SuppressWarnings("unchecked")
+  private Object cloneValue(final Object value, final FieldMetadata field) {
+    if (value == null) {
+      return null;
+    }
+
+    if (field.isObject()) {
+      return this.toStorageForm(value, field.getFieldTypeInfo());
+    }
+
+    if (field.isList() && value instanceof List<?> list) {
+      return this.cloneList(list, field);
+    }
+
+    if (field.isArray() && value.getClass().isArray()) {
+      return this.cloneList(arrayToList(value), field);
+    }
+
+    if (field.isMap() && value instanceof Map) {
+      return this.cloneMap((Map<String, Object>) value, field);
+    }
+
+    return value;
+  }
+
+  private List<Object> cloneList(final List<?> list, final FieldMetadata field) {
+    if (field.isPrimitiveList() || field.isPrimitiveArray()) {
+      return new ArrayList<>(list);
+    }
+
+    final TypeInfo elementInfo = field.getElementTypeInfo();
+    final List<Object> clonedList = new ArrayList<>();
+
+    for (final Object item : list) {
+      clonedList.add(this.toStorageForm(item, elementInfo));
+    }
+
+    return clonedList;
+  }
+
+  private Map<String, Object> cloneMap(final Map<String, Object> map, final FieldMetadata field) {
+    if (field.isPrimitiveValueMap()) {
+      return new HashMap<>(map);
+    }
+
+    final TypeInfo valueInfo = field.getElementTypeInfo();
+    final Map<String, Object> clonedMap = new HashMap<>();
+
+    for (final Map.Entry<String, Object> entry : map.entrySet()) {
+      if (entry.getValue() != null) {
+        clonedMap.put(entry.getKey(), this.toMergingMap(entry.getValue(), valueInfo));
+      }
+    }
+
+    return clonedMap;
+  }
+
+  // ========== 헬퍼 메서드 ==========
+
+  /**
+   * 객체를 Map으로 변환한다.
+   */
+  private Map<String, Object> toMergingMap(final Object value, final TypeInfo info) {
+    final Map<String, Object> map = new HashMap<>();
+    this.mergeIntoMap(map, value, info);
+    return map;
   }
 
   /**
-   * 객체에서 index 필드 값을 추출한다.
+   * 객체를 저장 형태로 변환한다.
+   * customMerge가 있으면 원본, 없으면 Map으로 변환.
    */
-  private Integer getIndexValue(final Object item, final TypeInfo elementInfo) {
-    final String indexFieldName = elementInfo.indexFieldName();
-    final FieldMetadata indexField = elementInfo.findField(indexFieldName);
+  private Object toStorageForm(final Object value, final TypeInfo info) {
+    if (info.hasCustomMerge()) {
+      return value;
+    }
+    return this.toMergingMap(value, info);
+  }
 
+  private static List<Object> arrayToList(final Object array) {
+    final int length = java.lang.reflect.Array.getLength(array);
+    final List<Object> list = new ArrayList<>(length);
+    for (int i = 0; i < length; i++) {
+      list.add(java.lang.reflect.Array.get(array, i));
+    }
+    return list;
+  }
+
+  private static Integer getIndexValue(
+      final Object item,
+      final TypeInfo elementInfo,
+      final String indexFieldName) {
+
+    final FieldMetadata indexField = elementInfo.findField(indexFieldName);
     if (indexField == null) {
       return null;
     }
@@ -285,11 +459,8 @@ public final class DeltaMerger<T> {
     return null;
   }
 
-  /**
-   * List에서 특정 index 값을 가진 아이템을 찾는다.
-   */
   @SuppressWarnings("unchecked")
-  private Optional<Map<String, Object>> findByIndex(
+  private static Optional<Map<String, Object>> findMapByIndex(
       final List<Object> list,
       final String indexFieldName,
       final Integer targetIndex) {
@@ -306,79 +477,35 @@ public final class DeltaMerger<T> {
     return Optional.empty();
   }
 
-  /**
-   * 값을 복사한다. Object와 List는 깊은 복사가 필요.
-   */
-  private Object cloneValue(final Object value, final FieldMetadata field) {
-    if (value == null) {
-      return null;
+  private static int findObjectIndexByValue(
+      final List<Object> list,
+      final TypeInfo elementInfo,
+      final String indexFieldName,
+      final Integer targetIndex) {
+
+    if (targetIndex == null) {
+      return -1;
     }
 
-    // 객체: Map으로 변환하며 복사
-    if (field.isObject()) {
-      return cloneObject(value, field);
+    final FieldMetadata indexField = elementInfo.findField(indexFieldName);
+    if (indexField == null) {
+      return -1;
     }
 
-    // List: 새 List로 복사
-    if (field.isList() && value instanceof List<?> list) {
-      return cloneList(list, field);
+    for (int i = 0; i < list.size(); i++) {
+      final Object item = list.get(i);
+      if (!(item instanceof Map) && targetIndex.equals(indexField.getValue(item))) {
+        return i;
+      }
     }
-
-    // 기본 타입: 불변이므로 그대로 반환
-    return value;
+    return -1;
   }
 
-  /**
-   * 객체를 Map으로 변환하며 복사한다.
-   */
-  private Map<String, Object> cloneObject(final Object value, final FieldMetadata field) {
-    final Map<String, Object> map = new HashMap<>();
-    // 해석된 필드 타입과 바인딩 사용 (TypeVariable 해석)
-    final Class<?> resolvedClass = field.getResolvedFieldClass();
-    final Map<String, Type> fieldBindings = field.getFieldTypeBindings();
-    final TypeInfo nestedInfo = TypeMetadataCache.getTypeInfo(resolvedClass, fieldBindings);
-    mergeIntoMap(map, value, nestedInfo);
-    return map;
+  private static boolean isIntegerType(final Class<?> type) {
+    return type == int.class || type == Integer.class;
   }
 
-  /**
-   * List를 복사한다.
-   */
-  private List<Object> cloneList(final List<?> list, final FieldMetadata field) {
-    // 기본 타입 List: 얕은 복사로 충분
-    if (field.isPrimitiveList()) {
-      return new ArrayList<>(list);
-    }
-
-    // 객체 List: 각 요소를 Map으로 변환하며 복사
-    // 해석된 요소 타입의 바인딩을 가져옴 (TypeVariable 해석)
-    final Map<String, Type> elementBindings = field.getElementTypeBindings();
-    final Class<?> elementClass = field.getResolvedElementClass();
-
-    final TypeInfo elementInfo = TypeMetadataCache.getTypeInfo(elementClass, elementBindings);
-    final String indexFieldName = elementInfo.indexFieldName();
-
-    if (indexFieldName == null) {
-      throw new MergeException(
-          "index field required for object list element: " + elementClass.getName()
-              + ". Use @StreamIndex annotation or add an 'index' field.",
-          null);
-    }
-
-    final List<Object> clonedList = new ArrayList<>();
-    for (final Object item : list) {
-      final Map<String, Object> itemMap = new HashMap<>();
-      mergeIntoMap(itemMap, item, elementInfo);
-      clonedList.add(itemMap);
-    }
-    return clonedList;
-  }
-
-  /**
-   * 두 Number를 합산한다.
-   * 타입 승격: Double > Long > Integer
-   */
-  private Number sumNumbers(final Number a, final Number b) {
+  private static Number sumNumbers(final Number a, final Number b) {
     if (a instanceof Double || b instanceof Double) {
       return a.doubleValue() + b.doubleValue();
     }

@@ -6,36 +6,25 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Marks a field as the index identifier for list item merging.
+ * List/Array 요소의 병합 규칙에 쓰일 인덱스 필드를 지정합니다.
  *
- * <p>
- * This annotation is used when the index field has a name other than "index".
- * Fields named "index" are automatically recognized without this annotation.
+ * <ul>
+ * <li>인덱스 필드의 값이 같은 요소끼리 병합됩니다.</li>
+ * <li>인덱스 필드 자체는 덮어쓰기 동작을 합니다.</li>
+ * <li>{@code "index"}라는 이름의 필드는 어노테이션 없이도 자동 인식됩니다.</li>
+ * <li>{@code int} 또는 {@code Integer} 타입이어야 합니다. 다른 타입이면 무시됩니다.</li>
+ * <li>이 어노테이션은 상위 객체에서 StreamList가 설정되었을 경우 무시됩니다.</li>
+ * </ul>
  *
- * <p>
- * When delta objects arrive with list items, items are matched by their index
- * value and merged together.
- *
- * <p>
- * The annotated field must be of {@code Integer} type.
- *
- * <p>
- * Example usage:
- *
- * <pre>{@code
- * // No annotation needed - "index" field is auto-detected
- * public class Choice {
- *   private Integer index;  // automatically recognized
- *   private String content;
+ * <pre>
+ * public class Calling {
+ *   &#64;StreamIndex
+ *   private int idx; // 이 필드로 요소 매칭
+ *   private String args; // 매칭된 객체끼리 병합 규칙 적용(String의 경우 concat)
  * }
+ * </pre>
  *
- * // Annotation required - field name is not "index"
- * public class ToolCall {
- *   @StreamIndex
- *   private Integer idx;  // custom name, needs annotation
- *   private String id;
- * }
- * }</pre>
+ * @see StreamList 상위 객체의 리스트 필드에서 인덱스 필드 지정
  */
 @Target(ElementType.FIELD)
 @Retention(RetentionPolicy.RUNTIME)

@@ -9,6 +9,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
@@ -39,6 +40,7 @@ import me.hanju.fluxhandle.deltastream.annotation.StreamOverwrite;
  * @param getter              LambdaMetafactory로 생성한 최적화된 getter
  * @param setter              LambdaMetafactory로 생성한 최적화된 setter (Record는 null)
  * @param isSpecialKey        인덱스 필드 또는 @StreamOverwrite 필드 여부 (병합 시 덮어쓰기)
+ * @param listIndexFieldName  @StreamList로 지정된 인덱스 필드명 (List 필드에만 해당, 없으면 null)
  */
 public record FieldMetadata(
     String fieldName,
@@ -48,7 +50,8 @@ public record FieldMetadata(
     Type resolvedElementType,
     Function<Object, Object> getter,
     BiConsumer<Object, Object> setter,
-    boolean isSpecialKey
+    boolean isSpecialKey,
+    String listIndexFieldName
 ) {
 
   // 기본 타입: List 요소가 기본 타입이면 extend(추가), 아니면 index-based merge
@@ -69,7 +72,7 @@ public record FieldMetadata(
    * @param resolvedFieldType   해석된 필드 타입 (TypeVariable이 실제 타입으로 치환됨)
    * @param elementType         List 요소 타입 (raw Class)
    * @param resolvedElementType List 요소의 해석된 타입 (제네릭 정보 포함)
-   * @param field               Field 객체 (@StreamOverwrite 어노테이션 확인용)
+   * @param field               Field 객체 (@StreamOverwrite, @StreamList 어노테이션 확인용)
    * @param getterMethod        getter 메서드 (필수)
    * @param setterMethod        setter 메서드 (Record는 null)
    * @param isIndexField        인덱스 필드 여부 (@StreamIndex 또는 "index" 이름)
@@ -84,13 +87,17 @@ public record FieldMetadata(
       final Field field,
       final Method getterMethod,
       final Method setterMethod,
-      final boolean isIndexField) {
+      final boolean isIndexField,
+      final boolean classLevelOverwrite) {
 
     final Function<Object, Object> getter = createGetter(fieldName, getterMethod);
     final BiConsumer<Object, Object> setter = createSetter(fieldName, setterMethod);
 
     final boolean isSpecialKey = isIndexField
+        || classLevelOverwrite
         || (field != null && field.isAnnotationPresent(StreamOverwrite.class));
+
+    final String listIndexFieldName = extractListIndexFieldName(field);
 
     return new FieldMetadata(
         fieldName,
@@ -100,8 +107,31 @@ public record FieldMetadata(
         resolvedElementType,
         getter,
         setter,
-        isSpecialKey
+        isSpecialKey,
+        listIndexFieldName
     );
+  }
+
+  /**
+   * @StreamList 어노테이션에서 인덱스 필드명을 추출한다.
+   *
+   * @param field Field 객체
+   * @return 인덱스 필드명, 어노테이션이 없거나 값이 비어있으면 null
+   */
+  private static String extractListIndexFieldName(final Field field) {
+    if (field == null) {
+      return null;
+    }
+
+    final me.hanju.fluxhandle.deltastream.annotation.StreamList annotation =
+        field.getAnnotation(me.hanju.fluxhandle.deltastream.annotation.StreamList.class);
+
+    if (annotation == null) {
+      return null;
+    }
+
+    final String index = annotation.index();
+    return index.isEmpty() ? null : index;
   }
 
   /**
@@ -224,6 +254,13 @@ public record FieldMetadata(
   }
 
   /**
+   * 배열 타입인지 확인.
+   */
+  public boolean isArray() {
+    return fieldType.isArray();
+  }
+
+  /**
    * 기본 타입의 List인지 확인 (String, Number, Boolean).
    * 기본 타입 리스트는 병합 시 단순히 extend(뒤에 추가)된다.
    */
@@ -237,6 +274,22 @@ public record FieldMetadata(
    */
   public boolean isObjectList() {
     return isList() && elementType != null && !PRIMITIVE_TYPES.contains(elementType);
+  }
+
+  /**
+   * 기본 타입의 배열인지 확인 (String, Number, Boolean, primitive).
+   * 기본 타입 배열은 병합 시 단순히 extend(뒤에 추가)된다.
+   */
+  public boolean isPrimitiveArray() {
+    return isArray() && elementType != null && PRIMITIVE_TYPES.contains(elementType);
+  }
+
+  /**
+   * 객체 타입의 배열인지 확인 (기본 타입이 아닌 것).
+   * 객체 배열은 index 기반으로 병합된다.
+   */
+  public boolean isObjectArray() {
+    return isArray() && elementType != null && !PRIMITIVE_TYPES.contains(elementType);
   }
 
   /**
@@ -268,11 +321,34 @@ public record FieldMetadata(
   }
 
   /**
-   * 복합 객체 타입인지 확인 (기본 타입도 아니고 List도 아닌 것).
+   * 복합 객체 타입인지 확인 (기본 타입도 아니고 List, Array, Map도 아닌 것).
    * 객체 필드는 재귀적으로 병합된다.
    */
   public boolean isObject() {
-    return !PRIMITIVE_TYPES.contains(fieldType) && !isList();
+    return !PRIMITIVE_TYPES.contains(fieldType) && !isList() && !isArray() && !isMap();
+  }
+
+  /**
+   * Map 타입인지 확인.
+   */
+  public boolean isMap() {
+    return Map.class.isAssignableFrom(fieldType);
+  }
+
+  /**
+   * 기본 타입 value의 Map인지 확인 (String, Number, Boolean).
+   * 기본 타입 Map은 병합 시 key 기준으로 value를 덮어쓴다.
+   */
+  public boolean isPrimitiveValueMap() {
+    return isMap() && elementType != null && PRIMITIVE_TYPES.contains(elementType);
+  }
+
+  /**
+   * 객체 타입 value의 Map인지 확인 (기본 타입이 아닌 것).
+   * 객체 Map은 key 기준으로 value를 재귀적으로 병합한다.
+   */
+  public boolean isObjectValueMap() {
+    return isMap() && elementType != null && !PRIMITIVE_TYPES.contains(elementType);
   }
 
   /**
@@ -341,6 +417,32 @@ public record FieldMetadata(
       return java.util.Map.of();
     }
     return TypeVariableResolver.extractBindingsFromType(resolvedElementType);
+  }
+
+  /**
+   * 해석된 필드 타입의 TypeInfo를 반환한다.
+   *
+   * <p>
+   * 객체 필드의 재귀적 병합에 사용된다.
+   * TypeVariable 바인딩이 해석된 상태로 TypeInfo를 조회한다.
+   *
+   * @return 필드 타입의 TypeInfo
+   */
+  public TypeMetadataCache.TypeInfo getFieldTypeInfo() {
+    return TypeMetadataCache.getTypeInfo(getResolvedFieldClass(), getFieldTypeBindings());
+  }
+
+  /**
+   * 해석된 요소 타입의 TypeInfo를 반환한다.
+   *
+   * <p>
+   * List, Array, Map의 요소 타입에 대한 재귀적 병합에 사용된다.
+   * TypeVariable 바인딩이 해석된 상태로 TypeInfo를 조회한다.
+   *
+   * @return 요소 타입의 TypeInfo
+   */
+  public TypeMetadataCache.TypeInfo getElementTypeInfo() {
+    return TypeMetadataCache.getTypeInfo(getResolvedElementClass(), getElementTypeBindings());
   }
 
   /**

@@ -19,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BinaryOperator;
 
 import me.hanju.fluxhandle.deltastream.annotation.StreamIndex;
+import me.hanju.fluxhandle.deltastream.annotation.StreamOverwrite;
 
 /**
  * 타입 메타데이터를 캐싱하여 반복적인 리플렉션을 방지하는 스레드 세이프 캐시.
@@ -104,6 +105,9 @@ public final class TypeMetadataCache {
   private static TypeInfo computeTypeInfo(final Class<?> type, final Map<String, Type> bindings) {
     final List<FieldMetadata> fields = new ArrayList<>();
 
+    // 클래스 레벨 @StreamOverwrite 체크
+    final boolean classLevelOverwrite = type.isAnnotationPresent(StreamOverwrite.class);
+
     // merge(T) 메서드가 있는지 찾기
     final Method mergeMethod = findMergeMethod(type);
 
@@ -121,8 +125,8 @@ public final class TypeMetadataCache {
         final Type resolvedGenericType = TypeVariableResolver.resolveType(
             component.getGenericType(), bindings);
 
-        final Class<?> elementType = extractElementType(resolvedGenericType);
-        final Type resolvedElementType = extractResolvedElementType(resolvedGenericType);
+        final Class<?> elementType = extractElementType(resolvedGenericType, component.getType());
+        final Type resolvedElementType = extractResolvedElementType(resolvedGenericType, component.getType());
         final boolean isIndexField = component.getName().equals(indexFieldName);
 
         fields.add(FieldMetadata.of(
@@ -134,7 +138,8 @@ public final class TypeMetadataCache {
             field,
             accessor,
             null, // Record는 setter 없음
-            isIndexField));
+            isIndexField,
+            classLevelOverwrite));
       }
     } else {
       // === 일반 클래스 처리 ===
@@ -150,8 +155,8 @@ public final class TypeMetadataCache {
         final Type resolvedGenericType = TypeVariableResolver.resolveType(
             field.getGenericType(), bindings);
 
-        final Class<?> elementType = extractElementType(resolvedGenericType);
-        final Type resolvedElementType = extractResolvedElementType(resolvedGenericType);
+        final Class<?> elementType = extractElementType(resolvedGenericType, field.getType());
+        final Type resolvedElementType = extractResolvedElementType(resolvedGenericType, field.getType());
         final boolean isIndexField = field.getName().equals(indexFieldName);
 
         fields.add(FieldMetadata.of(
@@ -163,7 +168,8 @@ public final class TypeMetadataCache {
             field,
             getter,
             setter,
-            isIndexField));
+            isIndexField,
+            classLevelOverwrite));
       }
     }
 
@@ -175,12 +181,14 @@ public final class TypeMetadataCache {
     if (type.isRecord()) {
       for (final RecordComponent component : type.getRecordComponents()) {
         final Field field = getRecordField(type, component.getName());
-        if (field != null && field.isAnnotationPresent(StreamIndex.class)) {
+        if (field != null && field.isAnnotationPresent(StreamIndex.class)
+            && isIntegerType(component.getType())) {
           return component.getName();
         }
       }
       for (final RecordComponent component : type.getRecordComponents()) {
-        if (component.getName().equals(DEFAULT_INDEX_FIELD)) {
+        if (component.getName().equals(DEFAULT_INDEX_FIELD)
+            && isIntegerType(component.getType())) {
           return DEFAULT_INDEX_FIELD;
         }
       }
@@ -189,7 +197,7 @@ public final class TypeMetadataCache {
         if (Modifier.isStatic(field.getModifiers()) || Modifier.isTransient(field.getModifiers())) {
           continue;
         }
-        if (field.isAnnotationPresent(StreamIndex.class)) {
+        if (field.isAnnotationPresent(StreamIndex.class) && isIntegerType(field.getType())) {
           return field.getName();
         }
       }
@@ -197,12 +205,20 @@ public final class TypeMetadataCache {
         if (Modifier.isStatic(field.getModifiers()) || Modifier.isTransient(field.getModifiers())) {
           continue;
         }
-        if (field.getName().equals(DEFAULT_INDEX_FIELD)) {
+        if (field.getName().equals(DEFAULT_INDEX_FIELD) && isIntegerType(field.getType())) {
           return DEFAULT_INDEX_FIELD;
         }
       }
     }
     return null;
+  }
+
+  /**
+   * 필드 타입이 int 또는 Integer인지 확인한다.
+   * index 필드는 List의 인덱스로 사용되므로 int 범위만 지원한다.
+   */
+  private static boolean isIntegerType(final Class<?> type) {
+    return type == int.class || type == Integer.class;
   }
 
   /**
@@ -348,24 +364,46 @@ public final class TypeMetadataCache {
 
   /**
    * 제네릭 타입에서 요소 타입을 추출한다. (raw Class만 반환)
-   * 예: List<String> -> String, List<Map<String, Object>> -> Map
+   * 예: List<String> -> String, List<Map<String, Object>> -> Map, String[] -> String
+   *     Map<String, Item> -> Item (value 타입)
+   *
+   * @param genericType 해석된 제네릭 타입
+   * @param fieldType   필드의 런타임 타입 (배열, Map 감지용)
    */
-  private static Class<?> extractElementType(final Type genericType) {
-    // ParameterizedType: List<String> 같은 제네릭 타입
+  private static Class<?> extractElementType(final Type genericType, final Class<?> fieldType) {
+    // 배열 타입: getComponentType() 사용
+    if (fieldType.isArray()) {
+      return fieldType.getComponentType();
+    }
+
+    // ParameterizedType: List<String>, Map<String, Item> 같은 제네릭 타입
     if (genericType instanceof ParameterizedType pt) {
       final Type[] typeArgs = pt.getActualTypeArguments();
 
-      // 첫 번째 타입 파라미터가 Class인 경우 (예: List<String>)
-      if (typeArgs.length > 0 && typeArgs[0] instanceof Class<?> elemClass) {
-        return elemClass;
+      // Map 타입: 두 번째 파라미터(value 타입) 추출
+      if (Map.class.isAssignableFrom(fieldType) && typeArgs.length > 1) {
+        return extractRawClass(typeArgs[1]);
       }
 
-      // 중첩된 ParameterizedType인 경우 (예: List<Map<String, Object>>)
-      if (typeArgs.length > 0 && typeArgs[0] instanceof ParameterizedType nestedPt) {
-        final Type rawType = nestedPt.getRawType();
-        if (rawType instanceof Class<?> rawClass) {
-          return rawClass;
-        }
+      // List 타입: 첫 번째 파라미터 추출
+      if (typeArgs.length > 0) {
+        return extractRawClass(typeArgs[0]);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Type에서 raw Class를 추출한다.
+   */
+  private static Class<?> extractRawClass(final Type type) {
+    if (type instanceof Class<?> clazz) {
+      return clazz;
+    }
+    if (type instanceof ParameterizedType pt) {
+      final Type rawType = pt.getRawType();
+      if (rawType instanceof Class<?> rawClass) {
+        return rawClass;
       }
     }
     return null;
@@ -376,14 +414,28 @@ public final class TypeMetadataCache {
    *
    * <p>
    * 예: {@code List<Choice<CitedMessage>>} -> {@code Choice<CitedMessage>} (ParameterizedType)
+   *     {@code Map<String, Item>} -> {@code Item} (value 타입)
    * 이 메서드는 TypeVariable 바인딩 정보를 보존한다.
    *
    * @param genericType 분석할 제네릭 타입
-   * @return 첫 번째 타입 인자 (제네릭 정보 포함), 없으면 null
+   * @param fieldType   필드의 런타임 타입 (배열, Map 감지용)
+   * @return 요소 타입 (제네릭 정보 포함), 없으면 null
    */
-  private static Type extractResolvedElementType(final Type genericType) {
+  private static Type extractResolvedElementType(final Type genericType, final Class<?> fieldType) {
+    // 배열 타입: componentType은 항상 Class이므로 그대로 반환
+    if (fieldType.isArray()) {
+      return fieldType.getComponentType();
+    }
+
     if (genericType instanceof ParameterizedType pt) {
       final Type[] typeArgs = pt.getActualTypeArguments();
+
+      // Map 타입: 두 번째 파라미터(value 타입) 반환
+      if (Map.class.isAssignableFrom(fieldType) && typeArgs.length > 1) {
+        return typeArgs[1];
+      }
+
+      // List 타입: 첫 번째 파라미터 반환
       if (typeArgs.length > 0) {
         return typeArgs[0];
       }
