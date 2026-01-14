@@ -4,10 +4,10 @@
 
 ## 주요 기능
 
-- **SimpleFluxHandle** - 입력과 결과 타입이 동일한 단순 스트리밍 (`T → T`)
-- **FluxHandle** - 델타 변환이 필요한 스트리밍 (`T → R`, `DeltaMapper` 사용)
-- **EmitHandle** - Flux 없이 직접 항목을 방출하는 sink 스타일 핸들
-- **DeltaStream** - 리플렉션 기반 델타 병합 (AI 채팅 응답, 증분 업데이트 등)
+- **StreamHandle** - 지연 구독, 구독 교체, 직접 방출을 모두 지원하는 핵심 핸들
+- **FluxHandle** - 생성 시 즉시 구독하는 편의 래퍼
+- **DeltaMapper** - 상태를 가질 수 있는 0:N 델타 변환
+- **DeltaMerger** - 리플렉션 기반 자동 델타 병합 (AI 채팅 응답, 증분 업데이트 등)
 - `get()` 또는 `get(timeout, unit)`으로 동기 결과 조회
 - `cancel()`로 취소 지원
 - `FluxHandleException` 계층 구조의 예외 처리
@@ -28,21 +28,20 @@ repositories {
 
 ```groovy
 dependencies {
-    implementation 'com.github.agent-hanju:fluxhandle:0.3.5'
+    implementation 'com.github.agent-hanju:fluxhandle:0.4.0'
 }
 ```
 
 ## 빠른 시작
 
-### SimpleFluxHandle - 단순 스트리밍
+### FluxHandle - 즉시 구독
 
-입력 타입과 결과 타입이 동일한 경우 사용:
+생성 시 바로 Flux를 구독하는 간편한 방식:
 
 ```java
-Flux<String> flux = Flux.just("Hello", " ", "World");
-
-SimpleFluxHandle<String> handle = new SimpleFluxHandle<>(
-    flux,
+// 변환 없이 사용 (입력 == 결과 타입)
+FluxHandle<String> handle = FluxHandle.of(
+    Flux.just("Hello", " ", "World"),
     String.class,
     item -> System.out.println("수신: " + item)
 );
@@ -50,16 +49,12 @@ SimpleFluxHandle<String> handle = new SimpleFluxHandle<>(
 String result = handle.get();  // "Hello World"
 ```
 
-### FluxHandle - 델타 변환 스트리밍
-
-SDK 응답을 도메인 객체로 변환하는 경우:
-
 ```java
-// DeltaMapper로 변환 로직 정의 (0:N 매핑 지원)
+// DeltaMapper로 변환하며 사용
 DeltaMapper<SdkChunk, MyDelta> mapper = chunk ->
     List.of(new MyDelta(chunk.getContent(), chunk.getIndex()));
 
-FluxHandle<SdkChunk, MyDelta> handle = new FluxHandle<>(
+FluxHandle<MyDelta> handle = FluxHandle.of(
     sdkStream,
     mapper,
     MyDelta.class,
@@ -67,6 +62,40 @@ FluxHandle<SdkChunk, MyDelta> handle = new FluxHandle<>(
 );
 
 MyDelta result = handle.get();
+```
+
+### StreamHandle - 유연한 핸들
+
+지연 구독, 구독 교체, 직접 방출이 필요한 경우:
+
+```java
+// 핸들 생성 (아직 구독 안 함)
+StreamHandle<MyDelta> handle = new StreamHandle<>(
+    MyDelta.class,
+    delta -> System.out.println("수신: " + delta)
+);
+
+// 나중에 구독 시작
+handle.subscribe(flux);
+
+// 또는 변환과 함께 구독
+handle.subscribe(sdkStream, mapper);
+
+MyDelta result = handle.get();
+```
+
+```java
+// 직접 방출 (Flux 없이)
+StreamHandle<ChatChunk> handle = new StreamHandle<>(
+    ChatChunk.class,
+    chunk -> System.out.println("수신: " + chunk)
+);
+
+handle.emitNext(chunk1);
+handle.emitNext(chunk2);
+handle.emitComplete();
+
+ChatChunk result = handle.get();  // 병합된 결과
 ```
 
 ### 복잡한 객체의 델타 병합
@@ -84,8 +113,8 @@ public class ChatChoice {
     private ChatMessage message;
 }
 
-// SimpleFluxHandle 생성 - 자동으로 델타 병합 수행
-SimpleFluxHandle<ChatCompletionChunk> handle = new SimpleFluxHandle<>(
+// FluxHandle로 자동 델타 병합
+FluxHandle<ChatCompletionChunk> handle = FluxHandle.of(
     chatStream,
     ChatCompletionChunk.class,
     chunk -> System.out.println("델타: " + chunk)
@@ -94,80 +123,81 @@ SimpleFluxHandle<ChatCompletionChunk> handle = new SimpleFluxHandle<>(
 ChatCompletionChunk result = handle.get();  // 완전히 병합된 결과
 ```
 
-### EmitHandle - Sink 스타일 스트리밍
-
-Flux 없이 외부에서 직접 항목을 방출하는 경우:
-
-```java
-EmitHandle<ChatCompletionChunk> handle = new EmitHandle<>(
-    ChatCompletionChunk.class,
-    chunk -> System.out.println("수신: " + chunk)
-);
-
-// 외부에서 직접 방출
-handle.emitNext(chunk1);
-handle.emitNext(chunk2);
-handle.emitComplete();
-
-ChatCompletionChunk result = handle.get();  // 병합된 결과
-```
-
 ## 구성 요소
 
-### IFluxHandle 인터페이스
+### Handle 인터페이스
 
-모든 handle 구현체의 공통 인터페이스 (`IFluxHandle<T, R>`):
+모든 handle 구현체의 공통 인터페이스 (`Handle<R>`):
 
 - `get()` / `get(timeout, unit)` - 블로킹 후 결과 조회
 - `cancel()` - 스트리밍 취소
 - `isCancelled()` / `isError()` / `getError()` - 상태 확인
 
-### SimpleFluxHandle\<T\>
+### StreamHandle\<R\>
 
-입력과 결과 타입이 동일한 경우(`T == T`) 사용. `Flux<T>`를 래핑하고 스트리밍 생명주기를 관리. 생성 시 즉시 구독되며, 내부적으로 `DeltaMerger`를 생성하여 자동 델타 병합을 수행.
-
-```java
-SimpleFluxHandle<String> handle = new SimpleFluxHandle<>(
-    flux,
-    String.class,
-    listener
-);
-```
-
-### FluxHandle\<T, R\>
-
-입력 타입 `T`를 결과 타입 `R`로 변환해야 하는 경우 사용. `DeltaMapper`를 통해 각 델타를 변환한 후 병합.
+핵심 핸들 구현. 지연 구독, 구독 교체, 직접 방출을 모두 지원:
 
 ```java
-FluxHandle<SdkChunk, MyDelta> handle = new FluxHandle<>(
-    flux,
-    mapper,      // DeltaMapper<T, R>
-    MyDelta.class,
-    listener
-);
+StreamHandle<MyDelta> handle = new StreamHandle<>(MyDelta.class, listener);
+
+// Flux 구독
+handle.subscribe(flux);                    // 변환 없이
+handle.subscribe(flux, mapper);            // DeltaMapper로 변환
+
+// 직접 방출
+handle.emitNext(delta);
+handle.emitError(exception);
+handle.emitComplete();
 ```
 
-### EmitHandle\<T\>
+#### subscribe 시 mapper를 전달하는 이유
 
-`Flux` 없이 외부에서 직접 항목을 방출하는 sink 스타일 핸들. `FluxSink`와 유사한 API를 제공:
+`DeltaMapper`는 **상태를 가진 변환**(버퍼링, 줄 단위 분할 등)을 위해 설계되었습니다. Flux 구독 시 mapper를 전달하면, handle이 mapper의 라이프사이클을 관리합니다. 스트림 완료나 취소 시 `flush()`가 자동 호출되어 버퍼에 남은 데이터가 처리됩니다.
 
 ```java
-EmitHandle<MyDelta> handle = new EmitHandle<>(
-    MyDelta.class,
-    listener
-);
-
-// Flux 구독 대신 직접 방출
-handle.emitNext(delta1);
-handle.emitNext(delta2);
-handle.emitComplete();  // 또는 emitError(e)
+// stateful mapper - handle이 flush 자동 호출
+handle.subscribe(flux, bufferingMapper);
 ```
 
-| FluxSink | EmitHandle |
-|----------|------------|
-| `sink.next(item)` | `handle.emitNext(item)` |
-| `sink.error(e)` | `handle.emitError(e)` |
-| `sink.complete()` | `handle.emitComplete()` |
+**stateless 변환은 Flux에서 직접 처리**: 상태가 필요 없는 단순 변환은 Flux의 `map()`이나 `flatMap()`을 사용하는 것이 더 간단합니다.
+
+```java
+// stateless 변환 - Flux.map() 사용 권장
+Flux<MyDelta> transformed = sdkStream.map(chunk -> new MyDelta(chunk.getContent()));
+handle.subscribe(transformed);
+```
+
+#### emitNext 사용 시
+
+직접 방출할 때는 이미 변환된 `R` 타입을 전달합니다. mapper를 사용하려면 호출자가 직접 변환하고 flush도 직접 호출해야 합니다.
+
+```java
+// 호출자가 mapper 관리
+DeltaMapper<SdkChunk, MyDelta> mapper = ...;
+
+for (SdkChunk chunk : chunks) {
+    for (MyDelta delta : mapper.map(chunk)) {
+        handle.emitNext(delta);
+    }
+}
+// flush도 호출자 책임
+for (MyDelta delta : mapper.flush()) {
+    handle.emitNext(delta);
+}
+handle.emitComplete();
+```
+
+### FluxHandle\<R\>
+
+`StreamHandle`의 편의 래퍼. 생성 시 즉시 구독:
+
+```java
+// 변환 없이
+FluxHandle<String> handle = FluxHandle.of(flux, String.class, listener);
+
+// 변환과 함께
+FluxHandle<MyDelta> handle = FluxHandle.of(flux, mapper, MyDelta.class, listener);
+```
 
 ### DeltaMapper\<T, R\>
 
@@ -193,12 +223,21 @@ DeltaMapper<String, String> lineMapper = new DeltaMapper<>() {
         }
         return lines;  // 0개 또는 N개 반환
     }
+
+    @Override
+    public List<String> flush() {
+        // 스트림 완료/취소 시 남은 버퍼 처리
+        if (buffer.isEmpty()) return List.of();
+        String remaining = buffer.toString();
+        buffer.setLength(0);
+        return List.of(remaining);
+    }
 };
 ```
 
 ### DeltaMerger\<T\>
 
-스트리밍 델타를 완전한 객체로 병합하는 내부 컴포넌트. `FluxHandle`과 `SimpleFluxHandle`이 생성 시 자동으로 생성하므로 직접 다룰 필요가 없습니다.
+스트리밍 델타를 완전한 객체로 병합하는 내부 컴포넌트. 핸들이 자동으로 생성하므로 직접 다룰 필요가 없습니다.
 
 지원하는 병합 규칙:
 
@@ -307,55 +346,63 @@ if (handle.isError()) {
 
 ## 마이그레이션 가이드
 
-### 0.2.x → 0.3.0
+### 0.3.x → 0.4.0
 
-`FluxAssembler` 인터페이스가 `DeltaMerger`로 교체되고, 클래스 구조가 변경되었습니다.
+클래스 구조가 단순화되었습니다.
 
-**Before (0.2.x):**
+**Before (0.3.x):**
 ```java
-FluxHandle<String, String> handle = new FluxHandle<>(
-    flux,
-    new FluxAssembler<String, String>() {
-        private final StringBuilder sb = new StringBuilder();
-
-        @Override
-        public void applyDelta(String delta) {
-            sb.append(delta);
-        }
-
-        @Override
-        public String build() {
-            return sb.toString();
-        }
-    },
-    listener
-);
-```
-
-**After (0.3.0):**
-```java
-// 입력 == 결과 타입인 경우: SimpleFluxHandle 사용
+// SimpleFluxHandle 사용
 SimpleFluxHandle<String> handle = new SimpleFluxHandle<>(
     flux,
     String.class,
     listener
 );
 
-// 변환이 필요한 경우: FluxHandle + DeltaMapper 사용
+// FluxHandle 사용
 FluxHandle<Input, Output> handle = new FluxHandle<>(
     flux,
-    input -> List.of(transform(input)),  // DeltaMapper
+    mapper,
     Output.class,
     listener
 );
+
+// EmitHandle 사용
+EmitHandle<MyDelta> handle = new EmitHandle<>(MyDelta.class, listener);
+handle.emitNext(delta);
+handle.emitComplete();
+```
+
+**After (0.4.0):**
+```java
+// FluxHandle.of() 사용 (변환 없이)
+FluxHandle<String> handle = FluxHandle.of(
+    flux,
+    String.class,
+    listener
+);
+
+// FluxHandle.of() 사용 (변환과 함께)
+FluxHandle<Output> handle = FluxHandle.of(
+    flux,
+    mapper,
+    Output.class,
+    listener
+);
+
+// StreamHandle 직접 방출
+StreamHandle<MyDelta> handle = new StreamHandle<>(MyDelta.class, listener);
+handle.emitNext(delta);
+handle.emitComplete();
 ```
 
 주요 변화:
-- `Handle` → `IFluxHandle` (인터페이스 리네임)
-- `DirectHandle` → `SimpleFluxHandle` (클래스 리네임 + 역할 변경)
-- `FluxHandle<T>` → `FluxHandle<T, R>` (변환 기능 추가)
-- 단순 케이스(`T == T`)는 `SimpleFluxHandle` 사용
-- 변환 케이스(`T → R`)는 `FluxHandle` + `DeltaMapper` 사용
+- `IFluxHandle` → `Handle` (인터페이스 리네임)
+- `Handle<T, R>` → `Handle<R>` (입력 타입 제네릭 제거)
+- `SimpleFluxHandle` 삭제 → `FluxHandle.of(flux, resultType, listener)` 사용
+- `EmitHandle` 삭제 → `StreamHandle`의 `emitNext()` / `emitComplete()` 사용
+- `FluxHandle<T, R>` → `FluxHandle<R>` (입력 타입 제네릭 제거)
+- `new FluxHandle<>()` → `FluxHandle.of()` (정적 팩토리 메서드)
 
 ## 라이선스
 

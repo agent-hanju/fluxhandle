@@ -104,13 +104,13 @@ class FluxHandleTest {
     DeltaMapper<InputChunk, OutputDelta> mapper = chunk -> List.of(new OutputDelta(chunk.getContent()));
 
     assertThrows(IllegalArgumentException.class, () ->
-        new FluxHandle<>(null, mapper, OutputDelta.class, item -> {}));
+        FluxHandle.of(null, mapper, OutputDelta.class, item -> {}));
     assertThrows(IllegalArgumentException.class, () ->
-        new FluxHandle<>(Flux.just(new InputChunk("a", 0)), null, OutputDelta.class, item -> {}));
+        FluxHandle.of(Flux.just(new InputChunk("a", 0)), null, OutputDelta.class, item -> {}));
     assertThrows(IllegalArgumentException.class, () ->
-        new FluxHandle<>(Flux.just(new InputChunk("a", 0)), mapper, null, item -> {}));
+        FluxHandle.of(Flux.just(new InputChunk("a", 0)), mapper, null, item -> {}));
     assertThrows(IllegalArgumentException.class, () ->
-        new FluxHandle<>(Flux.just(new InputChunk("a", 0)), mapper, OutputDelta.class, null));
+        FluxHandle.of(Flux.just(new InputChunk("a", 0)), mapper, OutputDelta.class, null));
   }
 
   @Test
@@ -122,7 +122,7 @@ class FluxHandleTest {
     );
     RecordingListener<OutputDelta> listener = new RecordingListener<>();
 
-    FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+    FluxHandle<OutputDelta> handle = FluxHandle.of(
         flux, SIMPLE_MAPPER, OutputDelta.class, listener);
     OutputDelta result = handle.get();
 
@@ -152,7 +152,7 @@ class FluxHandleTest {
     );
     RecordingListener<OutputDelta> listener = new RecordingListener<>();
 
-    FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+    FluxHandle<OutputDelta> handle = FluxHandle.of(
         flux, filteringMapper, OutputDelta.class, listener);
     OutputDelta result = handle.get();
 
@@ -176,7 +176,7 @@ class FluxHandleTest {
         new InputChunk("cd", 1)
     );
 
-    FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+    FluxHandle<OutputDelta> handle = FluxHandle.of(
         flux, expandingMapper, OutputDelta.class, item -> {});
     OutputDelta result = handle.get();
 
@@ -186,7 +186,7 @@ class FluxHandleTest {
   @Test
   void getWithTimeout_shouldReturnBuiltResult() throws TimeoutException {
     Flux<InputChunk> flux = Flux.just(new InputChunk("x", 0), new InputChunk("y", 1));
-    FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+    FluxHandle<OutputDelta> handle = FluxHandle.of(
         flux, SIMPLE_MAPPER, OutputDelta.class, item -> {});
 
     assertEquals("xy", handle.get(5, TimeUnit.SECONDS).getText());
@@ -194,14 +194,14 @@ class FluxHandleTest {
 
   @Test
   void getWithTimeout_shouldThrowOnNullUnit() {
-    FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+    FluxHandle<OutputDelta> handle = FluxHandle.of(
         Flux.just(new InputChunk("a", 0)), SIMPLE_MAPPER, OutputDelta.class, item -> {});
     assertThrows(IllegalArgumentException.class, () -> handle.get(1, null));
   }
 
   @Test
   void getWithTimeout_shouldThrowTimeoutException() {
-    FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+    FluxHandle<OutputDelta> handle = FluxHandle.of(
         Flux.never(), SIMPLE_MAPPER, OutputDelta.class, item -> {});
     assertThrows(TimeoutException.class, () -> handle.get(100, TimeUnit.MILLISECONDS));
   }
@@ -214,7 +214,7 @@ class FluxHandleTest {
         .doOnCancel(latch::countDown);
 
     RecordingListener<OutputDelta> listener = new RecordingListener<>();
-    FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+    FluxHandle<OutputDelta> handle = FluxHandle.of(
         flux, SIMPLE_MAPPER, OutputDelta.class, listener);
 
     Thread.sleep(120);
@@ -229,7 +229,7 @@ class FluxHandleTest {
   @Test
   void cancel_afterCompleteShouldHaveNoEffect() {
     RecordingListener<OutputDelta> listener = new RecordingListener<>();
-    FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+    FluxHandle<OutputDelta> handle = FluxHandle.of(
         Flux.just(new InputChunk("a", 0)), SIMPLE_MAPPER, OutputDelta.class, listener);
 
     handle.get();
@@ -247,7 +247,7 @@ class FluxHandleTest {
     );
     RecordingListener<OutputDelta> listener = new RecordingListener<>();
 
-    FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+    FluxHandle<OutputDelta> handle = FluxHandle.of(
         flux, SIMPLE_MAPPER, OutputDelta.class, listener);
     OutputDelta result = handle.get();
 
@@ -264,7 +264,7 @@ class FluxHandleTest {
       throw new RuntimeException("listener failed");
     };
 
-    FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+    FluxHandle<OutputDelta> handle = FluxHandle.of(
         Flux.just(new InputChunk("a", 0)), SIMPLE_MAPPER, OutputDelta.class, failingListener);
     handle.get();
 
@@ -278,7 +278,7 @@ class FluxHandleTest {
       throw new RuntimeException("mapping failed");
     };
 
-    FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+    FluxHandle<OutputDelta> handle = FluxHandle.of(
         Flux.just(new InputChunk("a", 0)), failingMapper, OutputDelta.class, item -> {});
     handle.get();
 
@@ -312,7 +312,7 @@ class FluxHandleTest {
   void mergeException_shouldWrapInFluxHandleException() {
     DeltaMapper<InputChunk, FailingOutput> mapper = chunk -> List.of(new FailingOutput(chunk.getContent()));
 
-    FluxHandle<InputChunk, FailingOutput> handle = new FluxHandle<>(
+    FluxHandle<FailingOutput> handle = FluxHandle.of(
         Flux.just(new InputChunk("a", 0), new InputChunk("b", 1)),
         mapper,
         FailingOutput.class,
@@ -324,8 +324,8 @@ class FluxHandleTest {
   }
 
   @Test
-  void iFluxHandleInterface_shouldBeCompatible() {
-    IFluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+  void handleInterface_shouldBeCompatible() {
+    Handle<OutputDelta> handle = FluxHandle.of(
         Flux.just(new InputChunk("test", 0)),
         SIMPLE_MAPPER,
         OutputDelta.class,
@@ -355,7 +355,7 @@ class FluxHandleTest {
         new InputChunk("c", 2)
     );
 
-    FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+    FluxHandle<OutputDelta> handle = FluxHandle.of(
         flux, statefulMapper, OutputDelta.class, item -> {});
     OutputDelta result = handle.get();
 
@@ -398,7 +398,7 @@ class FluxHandleTest {
     );
 
     RecordingListener<OutputDelta> listener = new RecordingListener<>();
-    FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+    FluxHandle<OutputDelta> handle = FluxHandle.of(
         flux, bufferingMapper, OutputDelta.class, listener);
     OutputDelta result = handle.get();
 
@@ -438,7 +438,7 @@ class FluxHandleTest {
         .doOnCancel(latch::countDown);
 
     RecordingListener<OutputDelta> listener = new RecordingListener<>();
-    FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+    FluxHandle<OutputDelta> handle = FluxHandle.of(
         flux, bufferingMapper, OutputDelta.class, listener);
 
     Thread.sleep(150);  // Let some items buffer

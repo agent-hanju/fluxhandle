@@ -9,18 +9,17 @@ import me.hanju.fluxhandle.exception.FluxHandleException;
  * A common interface for handles that manage streaming data and produce a final result.
  *
  * <p>
- * Implementations process streaming items of type {@code T} through delta mapping
- * and merging to construct a result of type {@code R}.
+ * Implementations process streaming items through delta mapping and merging
+ * to construct a result of type {@code R}.
  *
  * <p>
  * The {@link FluxListener} receives transformed deltas of type {@code R} after transformation.
  *
- * @param <T> the type of input elements being streamed
  * @param <R> the type of the built result
+ * @see StreamHandle
  * @see FluxHandle
- * @see SimpleFluxHandle
  */
-public interface IFluxHandle<T, R> {
+public interface Handle<R> {
 
   /**
    * Cancels the streaming and notifies the listener.
