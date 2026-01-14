@@ -2063,4 +2063,280 @@ class DeltaMergerTest {
   public static class NestedObjectMapContainer {
     Map<String, NestedMapItem> items;
   }
+
+  // === Interface Field Support Test DTOs ===
+
+  /**
+   * 문서 인터페이스 (인터페이스 필드 테스트용).
+   */
+  public interface IDocument {
+    String getTitle();
+    String getContent();
+  }
+
+  /**
+   * IDocument의 첫 번째 구현체.
+   */
+  @Getter @Setter
+  public static class SimpleDocument implements IDocument {
+    private String title;
+    private String content;
+
+    public SimpleDocument() {}
+
+    public SimpleDocument(String title, String content) {
+      this.title = title;
+      this.content = content;
+    }
+  }
+
+  /**
+   * IDocument의 두 번째 구현체 (다형성 테스트용).
+   */
+  @Getter @Setter
+  public static class RichDocument implements IDocument {
+    private String title;
+    private String content;
+    private String author;
+
+    public RichDocument() {}
+
+    public RichDocument(String title, String content, String author) {
+      this.title = title;
+      this.content = content;
+      this.author = author;
+    }
+  }
+
+  /**
+   * 인터페이스 필드를 가진 컨테이너.
+   */
+  @Getter @Setter
+  public static class InterfaceFieldContainer {
+    private String name;
+    private IDocument document;
+  }
+
+  /**
+   * 인터페이스 List 필드를 가진 컨테이너.
+   */
+  @Getter @Setter
+  public static class InterfaceListContainer {
+    private String name;
+    private List<IDocument> documents;
+  }
+
+  /**
+   * @StreamIndex가 있는 인덱스 문서 (인터페이스 List 병합 테스트용).
+   */
+  public interface IIndexedDocument {
+    int getIndex();
+    String getContent();
+  }
+
+  @Getter @Setter
+  public static class IndexedDocument implements IIndexedDocument {
+    @StreamIndex
+    private int index;
+    private String content;
+
+    public IndexedDocument() {}
+
+    public IndexedDocument(int index, String content) {
+      this.index = index;
+      this.content = content;
+    }
+  }
+
+  /**
+   * 인덱스가 있는 인터페이스 List 컨테이너.
+   */
+  @Getter @Setter
+  public static class IndexedInterfaceListContainer {
+    private List<IIndexedDocument> documents;
+  }
+
+  /**
+   * 인터페이스 필드 지원 테스트.
+   * 인터페이스/추상 클래스 필드가 올바르게 병합되고 복원되는지 검증한다.
+   */
+  @Nested
+  class InterfaceFieldSupport {
+
+    @Test
+    void shouldMergeInterfaceField() {
+      // 인터페이스 필드가 있는 객체 병합
+      DeltaMerger<InterfaceFieldContainer> merger =
+          new DeltaMerger<>(InterfaceFieldContainer.class);
+
+      InterfaceFieldContainer delta1 = new InterfaceFieldContainer();
+      delta1.name = "Container";
+      delta1.document = new SimpleDocument("Hello", " doc");
+      merger.applyDelta(delta1);
+
+      InterfaceFieldContainer delta2 = new InterfaceFieldContainer();
+      delta2.name = " One";
+      delta2.document = new SimpleDocument(" World", "ument");
+      merger.applyDelta(delta2);
+
+      InterfaceFieldContainer result = merger.build();
+      assertEquals("Container One", result.name);
+      assertNotNull(result.document);
+      assertInstanceOf(SimpleDocument.class, result.document);
+      assertEquals("Hello World", result.document.getTitle());
+      assertEquals(" document", result.document.getContent());
+    }
+
+    @Test
+    void shouldMergeInterfaceListField() {
+      // 인터페이스 List 필드가 있는 객체 병합 (인덱스 없이 append)
+      DeltaMerger<InterfaceListContainer> merger =
+          new DeltaMerger<>(InterfaceListContainer.class);
+
+      InterfaceListContainer delta1 = new InterfaceListContainer();
+      delta1.name = "List";
+      delta1.documents = new ArrayList<>();
+      delta1.documents.add(new SimpleDocument("Doc1", "Content1"));
+      merger.applyDelta(delta1);
+
+      InterfaceListContainer delta2 = new InterfaceListContainer();
+      delta2.name = " Container";
+      delta2.documents = new ArrayList<>();
+      delta2.documents.add(new RichDocument("Doc2", "Content2", "Author"));
+      merger.applyDelta(delta2);
+
+      InterfaceListContainer result = merger.build();
+      assertEquals("List Container", result.name);
+      assertEquals(2, result.documents.size());
+
+      // 첫 번째는 SimpleDocument
+      assertInstanceOf(SimpleDocument.class, result.documents.get(0));
+      assertEquals("Doc1", result.documents.get(0).getTitle());
+
+      // 두 번째는 RichDocument
+      assertInstanceOf(RichDocument.class, result.documents.get(1));
+      assertEquals("Doc2", result.documents.get(1).getTitle());
+      assertEquals("Author", ((RichDocument) result.documents.get(1)).getAuthor());
+    }
+
+    @Test
+    void shouldMergeIndexedInterfaceListByIndex() {
+      // @StreamIndex가 있는 인터페이스 List 병합
+      DeltaMerger<IndexedInterfaceListContainer> merger =
+          new DeltaMerger<>(IndexedInterfaceListContainer.class);
+
+      IndexedInterfaceListContainer delta1 = new IndexedInterfaceListContainer();
+      delta1.documents = new ArrayList<>();
+      delta1.documents.add(new IndexedDocument(0, "Hello"));
+      delta1.documents.add(new IndexedDocument(1, "World"));
+      merger.applyDelta(delta1);
+
+      IndexedInterfaceListContainer delta2 = new IndexedInterfaceListContainer();
+      delta2.documents = new ArrayList<>();
+      delta2.documents.add(new IndexedDocument(0, " Friend"));  // 같은 index → 병합
+      merger.applyDelta(delta2);
+
+      IndexedInterfaceListContainer result = merger.build();
+      assertEquals(2, result.documents.size());
+
+      assertInstanceOf(IndexedDocument.class, result.documents.get(0));
+      assertEquals(0, result.documents.get(0).getIndex());
+      assertEquals("Hello Friend", result.documents.get(0).getContent());
+
+      assertInstanceOf(IndexedDocument.class, result.documents.get(1));
+      assertEquals(1, result.documents.get(1).getIndex());
+      assertEquals("World", result.documents.get(1).getContent());
+    }
+
+    @Test
+    void shouldPreservePolymorphicTypesInList() {
+      // 다형성: 같은 List에 여러 구현체가 섞여 있는 경우
+      DeltaMerger<InterfaceListContainer> merger =
+          new DeltaMerger<>(InterfaceListContainer.class);
+
+      InterfaceListContainer delta1 = new InterfaceListContainer();
+      delta1.documents = new ArrayList<>();
+      delta1.documents.add(new SimpleDocument("Simple", "Content"));
+      delta1.documents.add(new RichDocument("Rich", "Content", "Alice"));
+      delta1.documents.add(new SimpleDocument("Simple2", "Content2"));
+      merger.applyDelta(delta1);
+
+      InterfaceListContainer result = merger.build();
+      assertEquals(3, result.documents.size());
+
+      // 각 요소가 원래 타입을 유지하는지 확인
+      assertInstanceOf(SimpleDocument.class, result.documents.get(0));
+      assertInstanceOf(RichDocument.class, result.documents.get(1));
+      assertInstanceOf(SimpleDocument.class, result.documents.get(2));
+
+      // RichDocument의 추가 필드도 보존되는지 확인
+      RichDocument rich = (RichDocument) result.documents.get(1);
+      assertEquals("Rich", rich.getTitle());
+      assertEquals("Alice", rich.getAuthor());
+    }
+
+    @Test
+    void shouldMergeInterfaceValueMap() {
+      // 인터페이스 value Map 병합
+      DeltaMerger<InterfaceMapContainer> merger =
+          new DeltaMerger<>(InterfaceMapContainer.class);
+
+      InterfaceMapContainer delta1 = new InterfaceMapContainer();
+      delta1.documents = new HashMap<>();
+      delta1.documents.put("simple", new SimpleDocument("Title1", "Content1"));
+      delta1.documents.put("rich", new RichDocument("Title2", "Content2", "Bob"));
+      merger.applyDelta(delta1);
+
+      InterfaceMapContainer delta2 = new InterfaceMapContainer();
+      delta2.documents = new HashMap<>();
+      delta2.documents.put("simple", new SimpleDocument(" Updated", " More"));  // 기존 키 병합
+      delta2.documents.put("new", new SimpleDocument("New", "Doc"));  // 새 키
+      merger.applyDelta(delta2);
+
+      InterfaceMapContainer result = merger.build();
+      assertEquals(3, result.documents.size());
+
+      // simple 키: 병합됨
+      assertInstanceOf(SimpleDocument.class, result.documents.get("simple"));
+      assertEquals("Title1 Updated", result.documents.get("simple").getTitle());
+      assertEquals("Content1 More", result.documents.get("simple").getContent());
+
+      // rich 키: 유지됨
+      assertInstanceOf(RichDocument.class, result.documents.get("rich"));
+      assertEquals("Title2", result.documents.get("rich").getTitle());
+      assertEquals("Bob", ((RichDocument) result.documents.get("rich")).getAuthor());
+
+      // new 키: 추가됨
+      assertInstanceOf(SimpleDocument.class, result.documents.get("new"));
+      assertEquals("New", result.documents.get("new").getTitle());
+    }
+
+    @Test
+    void shouldPreservePolymorphicTypesInMap() {
+      // Map에서 다형성 타입 보존
+      DeltaMerger<InterfaceMapContainer> merger =
+          new DeltaMerger<>(InterfaceMapContainer.class);
+
+      InterfaceMapContainer delta1 = new InterfaceMapContainer();
+      delta1.documents = new HashMap<>();
+      delta1.documents.put("a", new SimpleDocument("Simple", "Doc"));
+      delta1.documents.put("b", new RichDocument("Rich", "Doc", "Author"));
+      merger.applyDelta(delta1);
+
+      InterfaceMapContainer result = merger.build();
+
+      // 각 value가 원래 타입을 유지하는지 확인
+      assertInstanceOf(SimpleDocument.class, result.documents.get("a"));
+      assertInstanceOf(RichDocument.class, result.documents.get("b"));
+      assertEquals("Author", ((RichDocument) result.documents.get("b")).getAuthor());
+    }
+  }
+
+  /**
+   * 인터페이스 value Map 컨테이너.
+   */
+  @Getter @Setter
+  public static class InterfaceMapContainer {
+    private Map<String, IDocument> documents;
+  }
 }

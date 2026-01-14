@@ -189,7 +189,8 @@ public final class DeltaMerger<T> {
       final Object accValue,
       final Object deltaValue) {
 
-    final TypeInfo nestedInfo = field.getFieldTypeInfo();
+    // 인터페이스/추상 클래스의 경우 실제 런타임 타입의 TypeInfo를 사용
+    final TypeInfo nestedInfo = TypeMetadataCache.getTypeInfo(deltaValue.getClass());
 
     if (nestedInfo.hasCustomMerge() && !(accValue instanceof Map)) {
       try {
@@ -215,23 +216,33 @@ public final class DeltaMerger<T> {
       return;
     }
 
-    final TypeInfo elementInfo = field.getElementTypeInfo();
-    final String indexFieldName = this.resolveIndexFieldName(field, elementInfo);
-
-    if (indexFieldName == null) {
-      for (final Object deltaItem : deltaList) {
-        accList.add(this.toMergingMap(deltaItem, elementInfo));
-      }
-      return;
-    }
+    // @StreamList 어노테이션에서 지정된 인덱스 필드명을 먼저 확인
+    final String listIndexFieldName = field.listIndexFieldName();
 
     for (final Object deltaItem : deltaList) {
-      this.mergeObjectListItem(accList, deltaItem, elementInfo, indexFieldName);
+      // 인터페이스/추상 클래스의 경우 실제 런타임 타입의 TypeInfo를 사용
+      final TypeInfo actualElementInfo = TypeMetadataCache.getTypeInfo(deltaItem.getClass());
+      final String indexFieldName = this.resolveIndexFieldNameForItem(
+          listIndexFieldName, actualElementInfo);
+
+      if (indexFieldName == null) {
+        accList.add(this.toMergingMap(deltaItem, actualElementInfo));
+      } else {
+        this.mergeObjectListItem(accList, deltaItem, actualElementInfo, indexFieldName);
+      }
     }
   }
 
-  private String resolveIndexFieldName(final FieldMetadata field, final TypeInfo elementInfo) {
-    final String listIndexFieldName = field.listIndexFieldName();
+  /**
+   * 개별 아이템에 대해 인덱스 필드명을 결정한다.
+   *
+   * @param listIndexFieldName @StreamList로 지정된 필드명 (null일 수 있음)
+   * @param elementInfo        요소의 실제 타입 정보
+   * @return 인덱스 필드명, 없으면 null
+   */
+  private String resolveIndexFieldNameForItem(
+      final String listIndexFieldName,
+      final TypeInfo elementInfo) {
 
     if (listIndexFieldName != null) {
       final FieldMetadata indexField = elementInfo.findField(listIndexFieldName);
@@ -301,8 +312,6 @@ public final class DeltaMerger<T> {
       return;
     }
 
-    final TypeInfo valueInfo = field.getElementTypeInfo();
-
     for (final Map.Entry<String, Object> entry : deltaMap.entrySet()) {
       final String key = entry.getKey();
       final Object deltaItem = entry.getValue();
@@ -311,12 +320,14 @@ public final class DeltaMerger<T> {
         continue;
       }
 
+      // 인터페이스/추상 클래스의 경우 실제 런타임 타입의 TypeInfo를 사용
+      final TypeInfo actualValueInfo = TypeMetadataCache.getTypeInfo(deltaItem.getClass());
       final Object accItem = accMap.get(key);
 
       if (accItem == null) {
-        accMap.put(key, this.toMergingMap(deltaItem, valueInfo));
+        accMap.put(key, this.toMergingMap(deltaItem, actualValueInfo));
       } else if (accItem instanceof Map) {
-        this.mergeIntoMap((Map<String, Object>) accItem, deltaItem, valueInfo);
+        this.mergeIntoMap((Map<String, Object>) accItem, deltaItem, actualValueInfo);
       } else {
         accMap.put(key, deltaItem);
       }
@@ -411,11 +422,37 @@ public final class DeltaMerger<T> {
   // ========== 헬퍼 메서드 ==========
 
   /**
+   * 런타임 타입 정보를 저장하기 위한 예약 키.
+   *
+   * <p>
+   * 인터페이스/추상 클래스 필드의 경우, 병합 중에 Map으로 변환할 때
+   * 원본 객체의 실제 타입을 잃어버린다. 이 키에 런타임 타입을 저장해두면
+   * {@link ObjectBuilder}에서 올바른 타입으로 복원할 수 있다.
+   */
+  static final String RUNTIME_TYPE_KEY = "$$type$$";
+
+  /**
    * 객체를 Map으로 변환한다.
+   *
+   * <p>
+   * 객체의 런타임 타입을 {@link #RUNTIME_TYPE_KEY}에 저장하여
+   * 인터페이스/추상 클래스 필드도 올바르게 복원할 수 있도록 한다.
+   *
+   * <p>
+   * 인터페이스/추상 클래스의 경우 선언된 타입의 {@link TypeInfo}에는 필드가 없으므로,
+   * 실제 런타임 타입의 {@link TypeInfo}를 사용하여 필드를 추출한다.
+   *
+   * @param value 변환할 객체
+   * @param info  선언된 타입의 TypeInfo (인터페이스일 수 있음, 폴백용)
    */
   private Map<String, Object> toMergingMap(final Object value, final TypeInfo info) {
     final Map<String, Object> map = new HashMap<>();
-    this.mergeIntoMap(map, value, info);
+    final Class<?> runtimeType = value.getClass();
+    map.put(RUNTIME_TYPE_KEY, runtimeType);
+
+    // 인터페이스/추상 클래스의 경우 실제 런타임 타입의 TypeInfo를 사용
+    final TypeInfo actualInfo = TypeMetadataCache.getTypeInfo(runtimeType);
+    this.mergeIntoMap(map, value, actualInfo);
     return map;
   }
 

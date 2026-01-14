@@ -53,12 +53,17 @@ public final class ObjectBuilder {
    * 예를 들어 {@code Choice<CitedMessage>}를 빌드할 때
    * {@code {T -> CitedMessage}} 바인딩이 전달된다.
    *
+   * <p>
+   * 인터페이스나 추상 클래스가 전달된 경우, Map에 저장된 런타임 타입 정보를
+   * 사용하여 실제 구현 클래스로 인스턴스를 생성한다.
+   *
    * @param <T>      대상 타입
-   * @param type     인스턴스화할 클래스
+   * @param type     인스턴스화할 클래스 (인터페이스/추상 클래스일 수 있음)
    * @param values   누적된 필드 값들 (Map 기반)
    * @param bindings TypeVariable 바인딩 (부모에서 전달)
    * @return 생성된 인스턴스
    */
+  @SuppressWarnings("unchecked")
   public static <T> T build(
       final Class<T> type,
       final Map<String, Object> values,
@@ -68,22 +73,52 @@ public final class ObjectBuilder {
       return null;
     }
 
+    // 런타임 타입 정보가 있으면 해당 타입으로 빌드 (인터페이스/추상 클래스 지원)
+    final Class<?> actualType = resolveActualType(type, values);
+
     // 바인딩이 비어있으면 타입에서 자동으로 바인딩을 추출
     // (예: CitedResponse.class → {T=CitedMessage} 추출)
     final TypeInfo typeInfo = (bindings == null || bindings.isEmpty())
-        ? TypeMetadataCache.getTypeInfo(type)
-        : TypeMetadataCache.getTypeInfo(type, bindings);
+        ? TypeMetadataCache.getTypeInfo(actualType)
+        : TypeMetadataCache.getTypeInfo(actualType, bindings);
 
     // 중첩된 Map/List를 실제 객체 타입으로 변환
     final Map<String, Object> resolvedValues = resolveNestedValues(typeInfo, values);
 
-    if (type.isRecord()) {
+    if (actualType.isRecord()) {
       // Record: Canonical 생성자 사용
-      return buildRecord(type, resolvedValues);
+      return (T) buildRecord(actualType, resolvedValues);
     } else {
       // 일반 클래스: 기본 생성자 + 필드 설정
-      return buildClass(type, resolvedValues, bindings);
+      return (T) buildClass(actualType, resolvedValues, bindings);
     }
+  }
+
+  /**
+   * Map에서 실제 타입을 결정한다.
+   *
+   * <p>
+   * {@link DeltaMerger#RUNTIME_TYPE_KEY}에 저장된 런타임 타입이 있으면 사용하고,
+   * 없으면 선언된 타입을 그대로 사용한다.
+   *
+   * @param declaredType 선언된 타입 (인터페이스/추상 클래스일 수 있음)
+   * @param values       필드 값 Map
+   * @return 실제 인스턴스화할 타입
+   */
+  private static Class<?> resolveActualType(
+      final Class<?> declaredType,
+      final Map<String, Object> values) {
+
+    final Object storedType = values.get(DeltaMerger.RUNTIME_TYPE_KEY);
+
+    if (storedType instanceof Class<?> runtimeType) {
+      // 저장된 런타임 타입이 선언된 타입에 할당 가능한지 검증
+      if (declaredType.isAssignableFrom(runtimeType)) {
+        return runtimeType;
+      }
+    }
+
+    return declaredType;
   }
 
   /**
