@@ -70,4 +70,50 @@ public interface DeltaMapper<T, R> {
    * @return list of transformed deltas (may be empty)
    */
   List<R> map(T delta);
+
+  /**
+   * Flushes any buffered state and returns remaining deltas.
+   *
+   * <p>
+   * Called when the stream completes to emit any accumulated state that
+   * hasn't been emitted yet. For stateless mappers, the default implementation
+   * returns an empty list.
+   *
+   * <p>
+   * Example usage for line buffering:
+   *
+   * <pre>{@code
+   * DeltaMapper<String, String> lineMapper = new DeltaMapper<>() {
+   *     private final StringBuilder buffer = new StringBuilder();
+   *
+   *     @Override
+   *     public List<String> map(String chunk) {
+   *         buffer.append(chunk);
+   *         List<String> lines = new ArrayList<>();
+   *         int idx;
+   *         while ((idx = buffer.indexOf("\n")) >= 0) {
+   *             lines.add(buffer.substring(0, idx));
+   *             buffer.delete(0, idx + 1);
+   *         }
+   *         return lines;
+   *     }
+   *
+   *     @Override
+   *     public List<String> flush() {
+   *         // Emit remaining content without trailing newline
+   *         if (buffer.isEmpty()) {
+   *             return List.of();
+   *         }
+   *         String remaining = buffer.toString();
+   *         buffer.setLength(0);
+   *         return List.of(remaining);
+   *     }
+   * };
+   * }</pre>
+   *
+   * @return list of remaining deltas (may be empty)
+   */
+  default List<R> flush() {
+    return List.of();
+  }
 }

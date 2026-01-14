@@ -362,4 +362,93 @@ class FluxHandleTest {
     // Each delta has accumulated state: [a] + [ab] + [abc]
     assertEquals("[a][ab][abc]", result.getText());
   }
+
+  @Test
+  void flush_shouldBeCalledOnComplete() {
+    // Buffering mapper that only emits on newline, with flush for remaining
+    DeltaMapper<InputChunk, OutputDelta> bufferingMapper = new DeltaMapper<>() {
+      private final StringBuilder buffer = new StringBuilder();
+
+      @Override
+      public List<OutputDelta> map(InputChunk chunk) {
+        buffer.append(chunk.getContent());
+        List<OutputDelta> results = new ArrayList<>();
+        int idx;
+        while ((idx = buffer.indexOf("\n")) >= 0) {
+          results.add(new OutputDelta(buffer.substring(0, idx + 1)));
+          buffer.delete(0, idx + 1);
+        }
+        return results;
+      }
+
+      @Override
+      public List<OutputDelta> flush() {
+        if (buffer.isEmpty()) {
+          return List.of();
+        }
+        String remaining = buffer.toString();
+        buffer.setLength(0);
+        return List.of(new OutputDelta(remaining));
+      }
+    };
+
+    Flux<InputChunk> flux = Flux.just(
+        new InputChunk("line1\nline", 0),
+        new InputChunk("2", 1)  // no trailing newline
+    );
+
+    RecordingListener<OutputDelta> listener = new RecordingListener<>();
+    FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+        flux, bufferingMapper, OutputDelta.class, listener);
+    OutputDelta result = handle.get();
+
+    // "line1\n" emitted during map, "line2" emitted during flush
+    assertEquals("line1\nline2", result.getText());
+    assertEquals(2, listener.items.size());
+    assertEquals("line1\n", listener.items.get(0).getText());
+    assertEquals("line2", listener.items.get(1).getText());
+  }
+
+  @Test
+  void flush_shouldBeCalledOnCancel() throws Exception {
+    // Buffering mapper with flush
+    DeltaMapper<InputChunk, OutputDelta> bufferingMapper = new DeltaMapper<>() {
+      private final StringBuilder buffer = new StringBuilder();
+
+      @Override
+      public List<OutputDelta> map(InputChunk chunk) {
+        buffer.append(chunk.getContent());
+        return List.of();  // Buffer everything, emit nothing during map
+      }
+
+      @Override
+      public List<OutputDelta> flush() {
+        if (buffer.isEmpty()) {
+          return List.of();
+        }
+        String remaining = buffer.toString();
+        buffer.setLength(0);
+        return List.of(new OutputDelta(remaining));
+      }
+    };
+
+    CountDownLatch latch = new CountDownLatch(1);
+    Flux<InputChunk> flux = Flux.interval(Duration.ofMillis(50))
+        .map(i -> new InputChunk("x", i.intValue()))
+        .doOnCancel(latch::countDown);
+
+    RecordingListener<OutputDelta> listener = new RecordingListener<>();
+    FluxHandle<InputChunk, OutputDelta> handle = new FluxHandle<>(
+        flux, bufferingMapper, OutputDelta.class, listener);
+
+    Thread.sleep(150);  // Let some items buffer
+    handle.cancel();
+
+    assertTrue(latch.await(1, TimeUnit.SECONDS));
+    assertTrue(handle.isCancelled());
+
+    // Flush should have been called, so listener should have received 1 delta
+    assertEquals(1, listener.items.size());
+    assertTrue(listener.items.get(0).getText().startsWith("x"));  // At least one 'x' buffered
+  }
 }

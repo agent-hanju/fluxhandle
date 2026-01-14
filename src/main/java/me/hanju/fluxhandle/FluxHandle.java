@@ -174,6 +174,31 @@ public class FluxHandle<T, R> implements IFluxHandle<T, R> {
     if (this.completed) {
       log.warn("emitting complete failed. already completed.");
     } else {
+      // Flush remaining buffered deltas from mapper
+      final List<R> flushedDeltas;
+      try {
+        flushedDeltas = this.mapper.flush();
+      } catch (final Exception e) {
+        this.onError(new FluxHandleException("delta flush failed", e));
+        return;
+      }
+
+      for (final R delta : flushedDeltas) {
+        try {
+          this.merger.applyDelta(delta);
+        } catch (final Exception e) {
+          this.onError(new FluxHandleException("delta merge failed during flush", e));
+          return;
+        }
+
+        try {
+          this.listener.onNext(delta);
+        } catch (final Exception ex) {
+          this.onError(new FluxListenerException("listener failed during flush", ex));
+          return;
+        }
+      }
+
       final R result;
       try {
         result = this.merger.build();
@@ -206,6 +231,32 @@ public class FluxHandle<T, R> implements IFluxHandle<T, R> {
       log.warn("cancel failed. already completed.");
     } else {
       this.disposable.dispose();
+
+      // Flush remaining buffered deltas from mapper
+      final List<R> flushedDeltas;
+      try {
+        flushedDeltas = this.mapper.flush();
+      } catch (final Exception e) {
+        this.onError(new FluxHandleException("delta flush failed while cancel", e));
+        return;
+      }
+
+      for (final R delta : flushedDeltas) {
+        try {
+          this.merger.applyDelta(delta);
+        } catch (final Exception e) {
+          this.onError(new FluxHandleException("delta merge failed during cancel flush", e));
+          return;
+        }
+
+        try {
+          this.listener.onNext(delta);
+        } catch (final Exception ex) {
+          this.onError(new FluxListenerException("listener failed during cancel flush", ex));
+          return;
+        }
+      }
+
       final R result;
       try {
         result = this.merger.build();
