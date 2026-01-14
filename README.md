@@ -6,6 +6,7 @@
 
 - **SimpleFluxHandle** - 입력과 결과 타입이 동일한 단순 스트리밍 (`T → T`)
 - **FluxHandle** - 델타 변환이 필요한 스트리밍 (`T → R`, `DeltaMapper` 사용)
+- **EmitHandle** - Flux 없이 직접 항목을 방출하는 sink 스타일 핸들
 - **DeltaStream** - 리플렉션 기반 델타 병합 (AI 채팅 응답, 증분 업데이트 등)
 - `get()` 또는 `get(timeout, unit)`으로 동기 결과 조회
 - `cancel()`로 취소 지원
@@ -27,7 +28,7 @@ repositories {
 
 ```groovy
 dependencies {
-    implementation 'com.github.agent-hanju:fluxhandle:0.3.2'
+    implementation 'com.github.agent-hanju:fluxhandle:0.3.5'
 }
 ```
 
@@ -93,6 +94,24 @@ SimpleFluxHandle<ChatCompletionChunk> handle = new SimpleFluxHandle<>(
 ChatCompletionChunk result = handle.get();  // 완전히 병합된 결과
 ```
 
+### EmitHandle - Sink 스타일 스트리밍
+
+Flux 없이 외부에서 직접 항목을 방출하는 경우:
+
+```java
+EmitHandle<ChatCompletionChunk> handle = new EmitHandle<>(
+    ChatCompletionChunk.class,
+    chunk -> System.out.println("수신: " + chunk)
+);
+
+// 외부에서 직접 방출
+handle.emitNext(chunk1);
+handle.emitNext(chunk2);
+handle.emitComplete();
+
+ChatCompletionChunk result = handle.get();  // 병합된 결과
+```
+
 ## 구성 요소
 
 ### IFluxHandle 인터페이스
@@ -127,6 +146,28 @@ FluxHandle<SdkChunk, MyDelta> handle = new FluxHandle<>(
     listener
 );
 ```
+
+### EmitHandle\<T\>
+
+`Flux` 없이 외부에서 직접 항목을 방출하는 sink 스타일 핸들. `FluxSink`와 유사한 API를 제공:
+
+```java
+EmitHandle<MyDelta> handle = new EmitHandle<>(
+    MyDelta.class,
+    listener
+);
+
+// Flux 구독 대신 직접 방출
+handle.emitNext(delta1);
+handle.emitNext(delta2);
+handle.emitComplete();  // 또는 emitError(e)
+```
+
+| FluxSink | EmitHandle |
+|----------|------------|
+| `sink.next(item)` | `handle.emitNext(item)` |
+| `sink.error(e)` | `handle.emitError(e)` |
+| `sink.complete()` | `handle.emitComplete()` |
 
 ### DeltaMapper\<T, R\>
 
