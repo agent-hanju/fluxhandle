@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
-import me.hanju.fluxhandle.deltastream.map.DeltaMapper;
+import me.hanju.streambind.map.StreamMapper;
 import me.hanju.fluxhandle.exception.FluxHandleException;
 import me.hanju.fluxhandle.exception.FluxListenerException;
 import reactor.core.publisher.Flux;
@@ -96,12 +96,12 @@ class FluxHandleTest {
   }
 
   // Simple 1:1 mapper
-  private static final DeltaMapper<InputChunk, OutputDelta> SIMPLE_MAPPER =
+  private static final StreamMapper<InputChunk, OutputDelta> SIMPLE_MAPPER =
       chunk -> List.of(new OutputDelta(chunk.getContent()));
 
   @Test
   void constructor_shouldThrowOnNullArguments() {
-    DeltaMapper<InputChunk, OutputDelta> mapper = chunk -> List.of(new OutputDelta(chunk.getContent()));
+    StreamMapper<InputChunk, OutputDelta> mapper = chunk -> List.of(new OutputDelta(chunk.getContent()));
 
     assertThrows(IllegalArgumentException.class, () ->
         FluxHandle.of(null, mapper, OutputDelta.class, item -> {}));
@@ -137,7 +137,7 @@ class FluxHandleTest {
   @Test
   void get_withFilteringMapper_shouldSkipEmptyResults() {
     // Mapper that filters out chunks with even index
-    DeltaMapper<InputChunk, OutputDelta> filteringMapper = chunk -> {
+    StreamMapper<InputChunk, OutputDelta> filteringMapper = chunk -> {
       if (chunk.getIndex() % 2 == 0) {
         return List.of();  // Filter out
       }
@@ -163,7 +163,7 @@ class FluxHandleTest {
   @Test
   void get_withExpandingMapper_shouldMergeMultipleOutputs() {
     // Mapper that splits each chunk into multiple outputs
-    DeltaMapper<InputChunk, OutputDelta> expandingMapper = chunk -> {
+    StreamMapper<InputChunk, OutputDelta> expandingMapper = chunk -> {
       List<OutputDelta> outputs = new ArrayList<>();
       for (char c : chunk.getContent().toCharArray()) {
         outputs.add(new OutputDelta(String.valueOf(c)));
@@ -274,7 +274,7 @@ class FluxHandleTest {
 
   @Test
   void mapperException_shouldWrapInFluxHandleException() {
-    DeltaMapper<InputChunk, OutputDelta> failingMapper = chunk -> {
+    StreamMapper<InputChunk, OutputDelta> failingMapper = chunk -> {
       throw new RuntimeException("mapping failed");
     };
 
@@ -310,7 +310,7 @@ class FluxHandleTest {
 
   @Test
   void mergeException_shouldWrapInFluxHandleException() {
-    DeltaMapper<InputChunk, FailingOutput> mapper = chunk -> List.of(new FailingOutput(chunk.getContent()));
+    StreamMapper<InputChunk, FailingOutput> mapper = chunk -> List.of(new FailingOutput(chunk.getContent()));
 
     FluxHandle<FailingOutput> handle = FluxHandle.of(
         Flux.just(new InputChunk("a", 0), new InputChunk("b", 1)),
@@ -339,7 +339,7 @@ class FluxHandleTest {
   @Test
   void statefulMapper_shouldMaintainStateAcrossDeltas() {
     // Stateful mapper that accumulates content
-    DeltaMapper<InputChunk, OutputDelta> statefulMapper = new DeltaMapper<>() {
+    StreamMapper<InputChunk, OutputDelta> statefulMapper = new StreamMapper<>() {
       private final StringBuilder buffer = new StringBuilder();
 
       @Override
@@ -366,7 +366,7 @@ class FluxHandleTest {
   @Test
   void flush_shouldBeCalledOnComplete() {
     // Buffering mapper that only emits on newline, with flush for remaining
-    DeltaMapper<InputChunk, OutputDelta> bufferingMapper = new DeltaMapper<>() {
+    StreamMapper<InputChunk, OutputDelta> bufferingMapper = new StreamMapper<>() {
       private final StringBuilder buffer = new StringBuilder();
 
       @Override
@@ -412,7 +412,7 @@ class FluxHandleTest {
   @Test
   void flush_shouldBeCalledOnCancel() throws Exception {
     // Buffering mapper with flush
-    DeltaMapper<InputChunk, OutputDelta> bufferingMapper = new DeltaMapper<>() {
+    StreamMapper<InputChunk, OutputDelta> bufferingMapper = new StreamMapper<>() {
       private final StringBuilder buffer = new StringBuilder();
 
       @Override

@@ -29,9 +29,11 @@ tasks.named('test') {
 
 repositories {
   mavenCentral()
+  maven { url 'https://jitpack.io' }
 }
 
 dependencies {
+  implementation 'com.github.agent-hanju:streambind:0.0.1-SNAPSHOT'
   api 'org.slf4j:slf4j-api:2.0.17'
   api 'io.projectreactor:reactor-core:3.8.1'
 

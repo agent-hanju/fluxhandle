@@ -9,8 +9,8 @@ import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import me.hanju.fluxhandle.deltastream.map.DeltaMapper;
-import me.hanju.fluxhandle.deltastream.merge.DeltaMerger;
+import me.hanju.streambind.map.StreamMapper;
+import me.hanju.streambind.merge.StreamMerger;
 import me.hanju.fluxhandle.exception.FluxHandleException;
 import me.hanju.fluxhandle.exception.FluxListenerException;
 import reactor.core.Disposable;
@@ -25,9 +25,9 @@ import reactor.core.scheduler.Schedulers;
  * StreamHandle is the core implementation that provides:
  * <ul>
  * <li>Direct emission via {@link #emitNext(Object)}, {@link #emitError(Throwable)}, {@link #emitComplete()}</li>
- * <li>Flux subscription via {@link #subscribe(Flux)} or {@link #subscribe(Flux, DeltaMapper)}</li>
+ * <li>Flux subscription via {@link #subscribe(Flux)} or {@link #subscribe(Flux, StreamMapper)}</li>
  * <li>Subscription replacement support - can switch to different Flux sources</li>
- * <li>Automatic delta merging via {@link DeltaMerger}</li>
+ * <li>Automatic delta merging via {@link StreamMerger}</li>
  * </ul>
  *
  * <p>
@@ -69,7 +69,7 @@ import reactor.core.scheduler.Schedulers;
  * <pre>{@code
  * StreamHandle<MyDelta> handle = new StreamHandle<>(MyDelta.class, delta -> {});
  *
- * DeltaMapper<SdkChunk, MyDelta> mapper = chunk -> List.of(new MyDelta(chunk.getContent()));
+ * StreamMapper<SdkChunk, MyDelta> mapper = chunk -> List.of(new MyDelta(chunk.getContent()));
  * handle.subscribe(sdkStream, mapper);
  *
  * MyDelta result = handle.get();
@@ -77,18 +77,18 @@ import reactor.core.scheduler.Schedulers;
  *
  * @param <R> the type of the result and emitted deltas
  * @see Handle
- * @see DeltaMapper
+ * @see StreamMapper
  * @see FluxListener
  */
 public class StreamHandle<R> implements Handle<R> {
   private static final Logger log = LoggerFactory.getLogger(StreamHandle.class);
 
   private final FluxListener<R> listener;
-  private final DeltaMerger<R> merger;
+  private final StreamMerger<R> merger;
   private final CompletableFuture<R> future = new CompletableFuture<>();
 
   private Disposable disposable = null;
-  private DeltaMapper<?, R> currentMapper = null;
+  private StreamMapper<?, R> currentMapper = null;
   private Throwable error = null;
   private boolean completed = false;
   private boolean cancelled = false;
@@ -108,7 +108,7 @@ public class StreamHandle<R> implements Handle<R> {
     } else if (listener == null) {
       throw new IllegalArgumentException("listener cannot be null");
     }
-    this.merger = new DeltaMerger<>(resultType);
+    this.merger = new StreamMerger<>(resultType);
     this.listener = listener;
   }
 
@@ -144,7 +144,7 @@ public class StreamHandle<R> implements Handle<R> {
    * @throws IllegalArgumentException if flux or mapper is null
    * @throws IllegalStateException    if the handle is already completed
    */
-  public synchronized <T> void subscribe(final Flux<T> flux, final DeltaMapper<T, R> mapper) {
+  public synchronized <T> void subscribe(final Flux<T> flux, final StreamMapper<T, R> mapper) {
     if (flux == null) {
       throw new IllegalArgumentException("flux cannot be null");
     }
@@ -242,7 +242,7 @@ public class StreamHandle<R> implements Handle<R> {
     }
   }
 
-  private <T> void onNext(final T item, final DeltaMapper<T, R> mapper) {
+  private <T> void onNext(final T item, final StreamMapper<T, R> mapper) {
     if (this.completed) {
       log.warn("emitting next failed. already completed.");
       return;
@@ -300,7 +300,7 @@ public class StreamHandle<R> implements Handle<R> {
     }
   }
 
-  private <T> void onComplete(final DeltaMapper<T, R> mapper) {
+  private <T> void onComplete(final StreamMapper<T, R> mapper) {
     if (this.completed) {
       log.warn("emitting complete failed. already completed.");
     } else {

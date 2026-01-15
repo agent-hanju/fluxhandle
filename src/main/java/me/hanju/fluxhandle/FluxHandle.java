@@ -3,7 +3,7 @@ package me.hanju.fluxhandle;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-import me.hanju.fluxhandle.deltastream.map.DeltaMapper;
+import me.hanju.streambind.map.StreamMapper;
 import reactor.core.publisher.Flux;
 
 /**
@@ -21,7 +21,7 @@ import reactor.core.publisher.Flux;
  * Example usage with transformation:
  *
  * <pre>{@code
- * DeltaMapper<SdkChunk, MyDelta> mapper = chunk ->
+ * StreamMapper<SdkChunk, MyDelta> mapper = chunk ->
  *     List.of(new MyDelta(chunk.getContent(), chunk.getIndex()));
  *
  * FluxHandle<MyDelta> handle = FluxHandle.of(
@@ -50,7 +50,7 @@ import reactor.core.publisher.Flux;
  * @param <R> the type of the transformed and merged result
  * @see Handle
  * @see StreamHandle
- * @see DeltaMapper
+ * @see StreamMapper
  * @see FluxListener
  */
 public class FluxHandle<R> implements Handle<R> {
@@ -70,7 +70,7 @@ public class FluxHandle<R> implements Handle<R> {
    */
   public static <T, R> FluxHandle<R> of(
       final Flux<T> flux,
-      final DeltaMapper<T, R> mapper,
+      final StreamMapper<T, R> mapper,
       final Class<R> resultType,
       final FluxListener<R> listener) {
     if (flux == null) {

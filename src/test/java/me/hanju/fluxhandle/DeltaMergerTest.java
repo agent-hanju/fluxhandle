@@ -13,14 +13,13 @@ import org.junit.jupiter.api.Test;
 
 import lombok.Getter;
 import lombok.Setter;
-import me.hanju.fluxhandle.deltastream.annotation.StreamIndex;
-import me.hanju.fluxhandle.deltastream.annotation.StreamList;
-import me.hanju.fluxhandle.deltastream.annotation.StreamOverwrite;
-import me.hanju.fluxhandle.deltastream.merge.DeltaMerger;
-import me.hanju.fluxhandle.deltastream.merge.MergeException;
-import me.hanju.fluxhandle.deltastream.metadata.TypeMetadataCache;
+import me.hanju.streambind.annotation.StreamIndex;
+import me.hanju.streambind.annotation.StreamList;
+import me.hanju.streambind.annotation.StreamOverwrite;
+import me.hanju.streambind.merge.StreamMerger;
+import me.hanju.streambind.metadata.TypeMetadataCache;
 
-class DeltaMergerTest {
+class StreamMergerTest {
 
   @BeforeEach
   void setUp() {
@@ -32,7 +31,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldAppendStringFields() {
-      DeltaMerger<SimpleDto> merger = new DeltaMerger<>(SimpleDto.class);
+      StreamMerger<SimpleDto> merger = new StreamMerger<>(SimpleDto.class);
 
       SimpleDto delta1 = new SimpleDto();
       delta1.content = "Hello";
@@ -48,7 +47,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldSumIntegerFields() {
-      DeltaMerger<SimpleDto> merger = new DeltaMerger<>(SimpleDto.class);
+      StreamMerger<SimpleDto> merger = new StreamMerger<>(SimpleDto.class);
 
       SimpleDto delta1 = new SimpleDto();
       delta1.count = 10;
@@ -64,7 +63,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldSumLongFields() {
-      DeltaMerger<SimpleDto> merger = new DeltaMerger<>(SimpleDto.class);
+      StreamMerger<SimpleDto> merger = new StreamMerger<>(SimpleDto.class);
 
       SimpleDto delta1 = new SimpleDto();
       delta1.timestamp = 1000L;
@@ -80,7 +79,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldSumDoubleFields() {
-      DeltaMerger<NumberDto> merger = new DeltaMerger<>(NumberDto.class);
+      StreamMerger<NumberDto> merger = new StreamMerger<>(NumberDto.class);
 
       NumberDto delta1 = new NumberDto();
       delta1.price = 10.5;
@@ -97,7 +96,7 @@ class DeltaMergerTest {
     @Test
     void shouldRecognizeConventionIndexField() {
       // "index"라는 이름의 필드는 @StreamIndex 없이도 자동 인식
-      DeltaMerger<ConventionIndexItem> merger = new DeltaMerger<>(ConventionIndexItem.class);
+      StreamMerger<ConventionIndexItem> merger = new StreamMerger<>(ConventionIndexItem.class);
 
       ConventionIndexItem delta1 = new ConventionIndexItem();
       delta1.index = 0;  // 덮어쓰기 대상
@@ -116,7 +115,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldReturnEmptyObjectWhenNoDeltaApplied() {
-      DeltaMerger<SimpleDto> merger = new DeltaMerger<>(SimpleDto.class);
+      StreamMerger<SimpleDto> merger = new StreamMerger<>(SimpleDto.class);
 
       SimpleDto result = merger.build();
       assertNotNull(result);
@@ -126,7 +125,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldReplaceSpecialKeyIndex() {
-      DeltaMerger<IndexedItem> merger = new DeltaMerger<>(IndexedItem.class);
+      StreamMerger<IndexedItem> merger = new StreamMerger<>(IndexedItem.class);
 
       IndexedItem delta1 = new IndexedItem();
       delta1.index = 0;
@@ -145,7 +144,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldReplaceStreamOverwriteField() {
-      DeltaMerger<TypedItem> merger = new DeltaMerger<>(TypedItem.class);
+      StreamMerger<TypedItem> merger = new StreamMerger<>(TypedItem.class);
 
       TypedItem delta1 = new TypedItem();
       delta1.type = "function";
@@ -165,7 +164,7 @@ class DeltaMergerTest {
     @Test
     void shouldSkipNullOnStreamOverwriteField() {
       // @StreamOverwrite 필드에서도 null은 무시되어 기존 값 유지
-      DeltaMerger<TypedItem> merger = new DeltaMerger<>(TypedItem.class);
+      StreamMerger<TypedItem> merger = new StreamMerger<>(TypedItem.class);
 
       TypedItem delta1 = new TypedItem();
       delta1.type = "function";
@@ -185,8 +184,8 @@ class DeltaMergerTest {
     @Test
     void shouldReplaceStreamOverwriteListField() {
       // @StreamOverwrite가 List 필드에 있으면 병합 없이 전체 덮어쓰기
-      DeltaMerger<OverwriteListContainer> merger =
-          new DeltaMerger<>(OverwriteListContainer.class);
+      StreamMerger<OverwriteListContainer> merger =
+          new StreamMerger<>(OverwriteListContainer.class);
 
       // 첫 번째 델타: tags = ["a", "b"]
       OverwriteListContainer delta1 = new OverwriteListContainer();
@@ -207,8 +206,8 @@ class DeltaMergerTest {
     @Test
     void shouldReplaceStreamOverwriteObjectListField() {
       // @StreamOverwrite가 객체 List 필드에 있으면 index 기반 병합 없이 전체 덮어쓰기
-      DeltaMerger<OverwriteObjectListContainer> merger =
-          new DeltaMerger<>(OverwriteObjectListContainer.class);
+      StreamMerger<OverwriteObjectListContainer> merger =
+          new StreamMerger<>(OverwriteObjectListContainer.class);
 
       // 첫 번째 델타: items = [{index:0, value:"first"}]
       OverwriteObjectListContainer delta1 = new OverwriteObjectListContainer();
@@ -238,7 +237,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldSkipNullDeltaValues() {
-      DeltaMerger<SimpleDto> merger = new DeltaMerger<>(SimpleDto.class);
+      StreamMerger<SimpleDto> merger = new StreamMerger<>(SimpleDto.class);
 
       SimpleDto delta1 = new SimpleDto();
       delta1.content = "Hello";
@@ -257,7 +256,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldSkipNullDelta() {
-      DeltaMerger<SimpleDto> merger = new DeltaMerger<>(SimpleDto.class);
+      StreamMerger<SimpleDto> merger = new StreamMerger<>(SimpleDto.class);
 
       SimpleDto delta1 = new SimpleDto();
       delta1.content = "Hello";
@@ -272,7 +271,7 @@ class DeltaMergerTest {
     @Test
     void shouldOverwritePrimitiveFields() {
       // primitive 타입은 null 표현 불가 → 항상 덮어쓰기
-      DeltaMerger<PrimitiveDto> merger = new DeltaMerger<>(PrimitiveDto.class);
+      StreamMerger<PrimitiveDto> merger = new StreamMerger<>(PrimitiveDto.class);
 
       PrimitiveDto delta1 = new PrimitiveDto();
       delta1.setAge(10);
@@ -298,7 +297,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldMergeNestedObjects() {
-      DeltaMerger<Parent> merger = new DeltaMerger<>(Parent.class);
+      StreamMerger<Parent> merger = new StreamMerger<>(Parent.class);
 
       Parent delta1 = new Parent();
       delta1.id = "parent-1";
@@ -318,7 +317,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldMergeDeeplyNestedObjects() {
-      DeltaMerger<GrandParent> merger = new DeltaMerger<>(GrandParent.class);
+      StreamMerger<GrandParent> merger = new StreamMerger<>(GrandParent.class);
 
       GrandParent delta1 = new GrandParent();
       delta1.name = "root";
@@ -346,7 +345,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldExtendPrimitiveStringList() {
-      DeltaMerger<ListContainer> merger = new DeltaMerger<>(ListContainer.class);
+      StreamMerger<ListContainer> merger = new StreamMerger<>(ListContainer.class);
 
       ListContainer delta1 = new ListContainer();
       delta1.tags = new ArrayList<>(List.of("java", "kotlin"));
@@ -362,7 +361,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldMergeObjectListByIndex() {
-      DeltaMerger<ListContainer> merger = new DeltaMerger<>(ListContainer.class);
+      StreamMerger<ListContainer> merger = new StreamMerger<>(ListContainer.class);
 
       ListContainer delta1 = new ListContainer();
       delta1.items = new ArrayList<>();
@@ -388,7 +387,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldAddNewIndexToObjectList() {
-      DeltaMerger<ListContainer> merger = new DeltaMerger<>(ListContainer.class);
+      StreamMerger<ListContainer> merger = new StreamMerger<>(ListContainer.class);
 
       ListContainer delta1 = new ListContainer();
       delta1.items = new ArrayList<>();
@@ -414,7 +413,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldMergeInterleavedItems() {
-      DeltaMerger<ListContainer> merger = new DeltaMerger<>(ListContainer.class);
+      StreamMerger<ListContainer> merger = new StreamMerger<>(ListContainer.class);
 
       // 3개 인덱스가 무작위 순서로 교차 도착하는 시나리오
       // index 0: "He" + "llo" + "!" = "Hello!"
@@ -443,7 +442,7 @@ class DeltaMergerTest {
     @Test
     void shouldHandleMultipleItemsInSingleDelta() {
       // 한 번의 delta에 여러 인덱스의 아이템이 들어오는 경우
-      DeltaMerger<ListContainer> merger = new DeltaMerger<>(ListContainer.class);
+      StreamMerger<ListContainer> merger = new StreamMerger<>(ListContainer.class);
 
       // 첫 delta: index 0, 1, 2 세 개의 아이템이 한꺼번에
       ListContainer delta1 = new ListContainer();
@@ -495,7 +494,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldBuildRecordType() {
-      DeltaMerger<SimpleRecord> merger = new DeltaMerger<>(SimpleRecord.class);
+      StreamMerger<SimpleRecord> merger = new StreamMerger<>(SimpleRecord.class);
 
       SimpleRecord delta1 = new SimpleRecord("Hello", 10);
       merger.applyDelta(delta1);
@@ -510,7 +509,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldMergeNestedRecords() {
-      DeltaMerger<ParentRecord> merger = new DeltaMerger<>(ParentRecord.class);
+      StreamMerger<ParentRecord> merger = new StreamMerger<>(ParentRecord.class);
 
       ParentRecord delta1 = new ParentRecord("parent", new SimpleRecord("Hello", 10));
       merger.applyDelta(delta1);
@@ -530,7 +529,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldUseCustomMergeMethod() {
-      DeltaMerger<CustomChunk> merger = new DeltaMerger<>(CustomChunk.class);
+      StreamMerger<CustomChunk> merger = new StreamMerger<>(CustomChunk.class);
 
       merger.applyDelta(new CustomChunk("Hello"));
       merger.applyDelta(new CustomChunk(" "));
@@ -542,7 +541,7 @@ class DeltaMergerTest {
 
     @Test
     void shouldHandleSingleDeltaWithCustomMerge() {
-      DeltaMerger<CustomChunk> merger = new DeltaMerger<>(CustomChunk.class);
+      StreamMerger<CustomChunk> merger = new StreamMerger<>(CustomChunk.class);
 
       merger.applyDelta(new CustomChunk("only one"));
 
@@ -553,8 +552,8 @@ class DeltaMergerTest {
     @Test
     void shouldUseNestedCustomMergeMethod() {
       // 중첩된 객체 필드에서 customMerge 사용
-      DeltaMerger<NestedCustomMergeContainer> merger =
-          new DeltaMerger<>(NestedCustomMergeContainer.class);
+      StreamMerger<NestedCustomMergeContainer> merger =
+          new StreamMerger<>(NestedCustomMergeContainer.class);
 
       NestedCustomMergeContainer delta1 = new NestedCustomMergeContainer();
       delta1.name = "Container";
@@ -574,8 +573,8 @@ class DeltaMergerTest {
     @Test
     void shouldUseCustomMergeInList() {
       // List 요소에서 customMerge 사용
-      DeltaMerger<CustomMergeListContainer> merger =
-          new DeltaMerger<>(CustomMergeListContainer.class);
+      StreamMerger<CustomMergeListContainer> merger =
+          new StreamMerger<>(CustomMergeListContainer.class);
 
       CustomMergeListContainer delta1 = new CustomMergeListContainer();
       delta1.items = new ArrayList<>();
@@ -600,8 +599,8 @@ class DeltaMergerTest {
 
     @Test
     void shouldAssembleTextResponse() {
-      DeltaMerger<ChatCompletionChunk> merger =
-          new DeltaMerger<>(ChatCompletionChunk.class);
+      StreamMerger<ChatCompletionChunk> merger =
+          new StreamMerger<>(ChatCompletionChunk.class);
 
       // Chunk 1: metadata + role
       ChatCompletionChunk chunk1 = new ChatCompletionChunk();
@@ -645,8 +644,8 @@ class DeltaMergerTest {
 
     @Test
     void shouldAssembleToolCallResponse() {
-      DeltaMerger<ChatCompletionChunk> merger =
-          new DeltaMerger<>(ChatCompletionChunk.class);
+      StreamMerger<ChatCompletionChunk> merger =
+          new StreamMerger<>(ChatCompletionChunk.class);
 
       // Chunk 1: tool call start
       ChatCompletionChunk chunk1 = new ChatCompletionChunk();
@@ -708,8 +707,8 @@ class DeltaMergerTest {
 
     @Test
     void shouldAssembleMultipleToolCalls() {
-      DeltaMerger<ChatCompletionChunk> merger =
-          new DeltaMerger<>(ChatCompletionChunk.class);
+      StreamMerger<ChatCompletionChunk> merger =
+          new StreamMerger<>(ChatCompletionChunk.class);
 
       // Chunk 1: first tool call
       ChatCompletionChunk chunk1 = new ChatCompletionChunk();
@@ -791,8 +790,8 @@ class DeltaMergerTest {
     @Test
     void shouldSupportPrimitiveIntIndex() {
       // @StreamIndex가 int (primitive) 타입에서 동작하는지 확인
-      DeltaMerger<ListWithPrimitiveIndex> merger =
-          new DeltaMerger<>(ListWithPrimitiveIndex.class);
+      StreamMerger<ListWithPrimitiveIndex> merger =
+          new StreamMerger<>(ListWithPrimitiveIndex.class);
 
       ListWithPrimitiveIndex delta1 = new ListWithPrimitiveIndex();
       delta1.items = new ArrayList<>();
@@ -820,8 +819,8 @@ class DeltaMergerTest {
     void shouldAppendWhenStringIndexField() {
       // @StreamIndex가 String 필드에 붙어있으면 무시됨 (int/Integer만 지원)
       // index 필드가 없는 것으로 처리되어 append 동작
-      DeltaMerger<ListWithStringIndex> merger =
-          new DeltaMerger<>(ListWithStringIndex.class);
+      StreamMerger<ListWithStringIndex> merger =
+          new StreamMerger<>(ListWithStringIndex.class);
 
       ListWithStringIndex delta1 = new ListWithStringIndex();
       delta1.items = new ArrayList<>();
@@ -850,8 +849,8 @@ class DeltaMergerTest {
     void shouldAppendWhenStringFieldNamedIndex() {
       // "index"라는 이름이지만 String 타입이면 무시됨 (int/Integer만 지원)
       // index 필드가 없는 것으로 처리되어 append 동작
-      DeltaMerger<ListWithStringNamedIndex> merger =
-          new DeltaMerger<>(ListWithStringNamedIndex.class);
+      StreamMerger<ListWithStringNamedIndex> merger =
+          new StreamMerger<>(ListWithStringNamedIndex.class);
 
       ListWithStringNamedIndex delta1 = new ListWithStringNamedIndex();
       delta1.items = new ArrayList<>();
@@ -879,8 +878,8 @@ class DeltaMergerTest {
     @Test
     void shouldAppendWhenNoIndexField() {
       // index 필드가 없는 객체 리스트는 append 동작
-      DeltaMerger<BadListContainer> merger =
-          new DeltaMerger<>(BadListContainer.class);
+      StreamMerger<BadListContainer> merger =
+          new StreamMerger<>(BadListContainer.class);
 
       BadListContainer delta1 = new BadListContainer();
       delta1.items = new ArrayList<>();
@@ -910,7 +909,7 @@ class DeltaMergerTest {
     @Test
     void shouldThrowOnNullType() {
       assertThrows(IllegalArgumentException.class, () ->
-          new DeltaMerger<>(null));
+          new StreamMerger<>(null));
     }
   }
 
@@ -924,8 +923,8 @@ class DeltaMergerTest {
     @Test
     void shouldUseStreamListValueAttribute() {
       // @StreamList(index = "seq")로 인덱스 필드 지정
-      DeltaMerger<StreamListContainer> merger =
-          new DeltaMerger<>(StreamListContainer.class);
+      StreamMerger<StreamListContainer> merger =
+          new StreamMerger<>(StreamListContainer.class);
 
       StreamListContainer delta1 = new StreamListContainer();
       delta1.items = new ArrayList<>();
@@ -952,8 +951,8 @@ class DeltaMergerTest {
     @Test
     void shouldUseStreamListIndexAttribute() {
       // @StreamList(index = "seq")로 인덱스 필드 지정
-      DeltaMerger<StreamListIndexAttrContainer> merger =
-          new DeltaMerger<>(StreamListIndexAttrContainer.class);
+      StreamMerger<StreamListIndexAttrContainer> merger =
+          new StreamMerger<>(StreamListIndexAttrContainer.class);
 
       StreamListIndexAttrContainer delta1 = new StreamListIndexAttrContainer();
       delta1.items = new ArrayList<>();
@@ -979,8 +978,8 @@ class DeltaMergerTest {
     @Test
     void shouldAppendWhenStreamListFieldNotExists() {
       // @StreamList(index = "nonExistent")로 존재하지 않는 필드 지정 → append
-      DeltaMerger<StreamListInvalidFieldContainer> merger =
-          new DeltaMerger<>(StreamListInvalidFieldContainer.class);
+      StreamMerger<StreamListInvalidFieldContainer> merger =
+          new StreamMerger<>(StreamListInvalidFieldContainer.class);
 
       StreamListInvalidFieldContainer delta1 = new StreamListInvalidFieldContainer();
       delta1.items = new ArrayList<>();
@@ -1008,8 +1007,8 @@ class DeltaMergerTest {
     @Test
     void shouldAppendWhenStreamListFieldIsNotInteger() {
       // @StreamList(index = "seq")로 String 타입 필드 지정 → append
-      DeltaMerger<StreamListStringFieldContainer> merger =
-          new DeltaMerger<>(StreamListStringFieldContainer.class);
+      StreamMerger<StreamListStringFieldContainer> merger =
+          new StreamMerger<>(StreamListStringFieldContainer.class);
 
       StreamListStringFieldContainer delta1 = new StreamListStringFieldContainer();
       delta1.items = new ArrayList<>();
@@ -1037,47 +1036,49 @@ class DeltaMergerTest {
     @Test
     void shouldOverrideStreamIndexWithStreamList() {
       // @StreamList(index = "customIdx")가 요소 클래스의 @StreamIndex보다 우선
-      DeltaMerger<StreamListOverrideContainer> merger =
-          new DeltaMerger<>(StreamListOverrideContainer.class);
+      // streambind는 index 값을 배열 위치로 사용함
+      StreamMerger<StreamListOverrideContainer> merger =
+          new StreamMerger<>(StreamListOverrideContainer.class);
 
-      // 첫 번째 델타: index=0, customIdx=100
+      // 첫 번째 델타: index=0, customIdx=1
       StreamListOverrideContainer delta1 = new StreamListOverrideContainer();
       delta1.items = new ArrayList<>();
       ItemWithStreamIndex item1 = new ItemWithStreamIndex();
       item1.index = 0;
-      item1.customIdx = 100;  // @StreamList가 사용할 인덱스
+      item1.customIdx = 1;  // @StreamList가 사용할 인덱스
       item1.value = "Custom";
       delta1.items.add(item1);
       merger.applyDelta(delta1);
 
-      // 두 번째 델타: index=0 (같음), customIdx=100 (같음) → 병합
+      // 두 번째 델타: index=0 (같음), customIdx=1 (같음) → 병합
       StreamListOverrideContainer delta2 = new StreamListOverrideContainer();
       delta2.items = new ArrayList<>();
       ItemWithStreamIndex item2 = new ItemWithStreamIndex();
       item2.index = 0;
-      item2.customIdx = 100;
+      item2.customIdx = 1;
       item2.value = " Index";
       delta2.items.add(item2);
       merger.applyDelta(delta2);
 
-      // 세 번째 델타: index=0 (같음), customIdx=200 (다름) → 새 아이템
+      // 세 번째 델타: index=0 (같음), customIdx=2 (다름) → 새 아이템
       StreamListOverrideContainer delta3 = new StreamListOverrideContainer();
       delta3.items = new ArrayList<>();
       ItemWithStreamIndex item3 = new ItemWithStreamIndex();
       item3.index = 0;  // @StreamIndex라면 병합되어야 함
-      item3.customIdx = 200;  // @StreamList로 인해 새 아이템
+      item3.customIdx = 2;  // @StreamList로 인해 새 아이템
       item3.value = "New";
       delta3.items.add(item3);
       merger.applyDelta(delta3);
 
       StreamListOverrideContainer result = merger.build();
       // @StreamList(index = "customIdx")가 우선 → customIdx 기준으로 병합
-      // customIdx=100: "Custom Index", customIdx=200: "New"
-      assertEquals(2, result.items.size());
-      assertEquals(100, result.items.get(0).customIdx);
-      assertEquals("Custom Index", result.items.get(0).value);
-      assertEquals(200, result.items.get(1).customIdx);
-      assertEquals("New", result.items.get(1).value);
+      // index 값이 배열 위치로 사용됨: [0]=null, [1]=병합된 아이템, [2]=새 아이템
+      assertEquals(3, result.items.size());
+      assertNull(result.items.get(0));  // position 0은 사용 안 됨
+      assertEquals(1, result.items.get(1).customIdx);
+      assertEquals("Custom Index", result.items.get(1).value);
+      assertEquals(2, result.items.get(2).customIdx);
+      assertEquals("New", result.items.get(2).value);
     }
   }
 
@@ -1091,8 +1092,8 @@ class DeltaMergerTest {
     @Test
     void shouldAppendStringArray() {
       // String[] 배열 append 병합
-      DeltaMerger<StringArrayContainer> merger =
-          new DeltaMerger<>(StringArrayContainer.class);
+      StreamMerger<StringArrayContainer> merger =
+          new StreamMerger<>(StringArrayContainer.class);
 
       StringArrayContainer delta1 = new StringArrayContainer();
       delta1.tags = new String[]{"a", "b"};
@@ -1112,8 +1113,8 @@ class DeltaMergerTest {
     @Test
     void shouldAppendPrimitiveIntArray() {
       // int[] primitive 배열 append 병합
-      DeltaMerger<IntArrayContainer> merger =
-          new DeltaMerger<>(IntArrayContainer.class);
+      StreamMerger<IntArrayContainer> merger =
+          new StreamMerger<>(IntArrayContainer.class);
 
       IntArrayContainer delta1 = new IntArrayContainer();
       delta1.numbers = new int[]{1, 2};
@@ -1134,8 +1135,8 @@ class DeltaMergerTest {
     @Test
     void shouldMergeObjectArrayByIndex() {
       // @StreamIndex 객체 배열 index 기반 병합
-      DeltaMerger<ObjectArrayContainer> merger =
-          new DeltaMerger<>(ObjectArrayContainer.class);
+      StreamMerger<ObjectArrayContainer> merger =
+          new StreamMerger<>(ObjectArrayContainer.class);
 
       ObjectArrayContainer delta1 = new ObjectArrayContainer();
       IndexedItem item1 = new IndexedItem();
@@ -1160,8 +1161,8 @@ class DeltaMergerTest {
     @Test
     void shouldUseStreamListWithArray() {
       // @StreamList(index = "seq")로 배열 인덱스 필드 지정
-      DeltaMerger<StreamListArrayContainer> merger =
-          new DeltaMerger<>(StreamListArrayContainer.class);
+      StreamMerger<StreamListArrayContainer> merger =
+          new StreamMerger<>(StreamListArrayContainer.class);
 
       StreamListArrayContainer delta1 = new StreamListArrayContainer();
       ExternalItem item1 = new ExternalItem();
@@ -1186,8 +1187,8 @@ class DeltaMergerTest {
     @Test
     void shouldOverwriteArrayWithStreamOverwrite() {
       // @StreamOverwrite 배열 전체 덮어쓰기
-      DeltaMerger<OverwriteArrayContainer> merger =
-          new DeltaMerger<>(OverwriteArrayContainer.class);
+      StreamMerger<OverwriteArrayContainer> merger =
+          new StreamMerger<>(OverwriteArrayContainer.class);
 
       OverwriteArrayContainer delta1 = new OverwriteArrayContainer();
       delta1.tags = new String[]{"a", "b"};
@@ -1206,8 +1207,8 @@ class DeltaMergerTest {
     @Test
     void shouldAppendNoIndexObjectArray() {
       // index 없는 객체 배열 append 병합
-      DeltaMerger<NoIndexArrayContainer> merger =
-          new DeltaMerger<>(NoIndexArrayContainer.class);
+      StreamMerger<NoIndexArrayContainer> merger =
+          new StreamMerger<>(NoIndexArrayContainer.class);
 
       NoIndexArrayContainer delta1 = new NoIndexArrayContainer();
       NoIndexItem item1 = new NoIndexItem();
@@ -1231,8 +1232,8 @@ class DeltaMergerTest {
     @Test
     void shouldSupportArrayInRecord() {
       // Record + 배열 필드 지원
-      DeltaMerger<ArrayRecord> merger =
-          new DeltaMerger<>(ArrayRecord.class);
+      StreamMerger<ArrayRecord> merger =
+          new StreamMerger<>(ArrayRecord.class);
 
       IndexedItem item1 = new IndexedItem();
       item1.index = 0;
@@ -1268,8 +1269,8 @@ class DeltaMergerTest {
     @Test
     void shouldConcatStringValueMapByKey() {
       // String value Map: 기존 키는 연결(concat)
-      DeltaMerger<PrimitiveMapContainer> merger =
-          new DeltaMerger<>(PrimitiveMapContainer.class);
+      StreamMerger<PrimitiveMapContainer> merger =
+          new StreamMerger<>(PrimitiveMapContainer.class);
 
       PrimitiveMapContainer delta1 = new PrimitiveMapContainer();
       delta1.metadata = new HashMap<>();
@@ -1293,8 +1294,8 @@ class DeltaMergerTest {
     @Test
     void shouldSumIntegerValueMapByKey() {
       // Integer value Map: 기존 키는 합산
-      DeltaMerger<IntegerMapContainer> merger =
-          new DeltaMerger<>(IntegerMapContainer.class);
+      StreamMerger<IntegerMapContainer> merger =
+          new StreamMerger<>(IntegerMapContainer.class);
 
       IntegerMapContainer delta1 = new IntegerMapContainer();
       delta1.counts = new HashMap<>();
@@ -1318,8 +1319,8 @@ class DeltaMergerTest {
     @Test
     void shouldMergeObjectValueMapRecursively() {
       // 객체 value Map의 재귀적 병합
-      DeltaMerger<ObjectMapContainer> merger =
-          new DeltaMerger<>(ObjectMapContainer.class);
+      StreamMerger<ObjectMapContainer> merger =
+          new StreamMerger<>(ObjectMapContainer.class);
 
       ObjectMapContainer delta1 = new ObjectMapContainer();
       delta1.items = new HashMap<>();
@@ -1350,8 +1351,8 @@ class DeltaMergerTest {
     @Test
     void shouldOverwriteMapWithStreamOverwrite() {
       // @StreamOverwrite Map 전체 덮어쓰기
-      DeltaMerger<OverwriteMapContainer> merger =
-          new DeltaMerger<>(OverwriteMapContainer.class);
+      StreamMerger<OverwriteMapContainer> merger =
+          new StreamMerger<>(OverwriteMapContainer.class);
 
       OverwriteMapContainer delta1 = new OverwriteMapContainer();
       delta1.config = new HashMap<>();
@@ -1375,8 +1376,8 @@ class DeltaMergerTest {
     @Test
     void shouldMergeNestedObjectValueMap() {
       // 중첩된 객체 value Map의 재귀적 병합
-      DeltaMerger<NestedObjectMapContainer> merger =
-          new DeltaMerger<>(NestedObjectMapContainer.class);
+      StreamMerger<NestedObjectMapContainer> merger =
+          new StreamMerger<>(NestedObjectMapContainer.class);
 
       NestedObjectMapContainer delta1 = new NestedObjectMapContainer();
       delta1.items = new HashMap<>();
@@ -1405,8 +1406,8 @@ class DeltaMergerTest {
     @Test
     void shouldHandleEmptyMap() {
       // 빈 Map 처리
-      DeltaMerger<PrimitiveMapContainer> merger =
-          new DeltaMerger<>(PrimitiveMapContainer.class);
+      StreamMerger<PrimitiveMapContainer> merger =
+          new StreamMerger<>(PrimitiveMapContainer.class);
 
       PrimitiveMapContainer delta1 = new PrimitiveMapContainer();
       delta1.metadata = new HashMap<>();
@@ -1434,7 +1435,7 @@ class DeltaMergerTest {
     void shouldResolveTypeVariableInInheritance() {
       // CitedResponse extends BaseResponse<CitedMessage>
       // choices 필드는 List<GenericChoice<CitedMessage>>가 됨
-      DeltaMerger<CitedResponse> merger = new DeltaMerger<>(CitedResponse.class);
+      StreamMerger<CitedResponse> merger = new StreamMerger<>(CitedResponse.class);
 
       // 첫 번째 델타
       CitedResponse delta1 = new CitedResponse();
@@ -1478,8 +1479,8 @@ class DeltaMergerTest {
     @Test
     void shouldHandleMultipleLevelInheritance() {
       // ExtendedCitedResponse extends CitedResponse extends BaseResponse<CitedMessage>
-      DeltaMerger<ExtendedCitedResponse> merger =
-          new DeltaMerger<>(ExtendedCitedResponse.class);
+      StreamMerger<ExtendedCitedResponse> merger =
+          new StreamMerger<>(ExtendedCitedResponse.class);
 
       ExtendedCitedResponse delta1 = new ExtendedCitedResponse();
       delta1.id = "ext_1";
@@ -1504,8 +1505,8 @@ class DeltaMergerTest {
     @Test
     void shouldHandleMultipleTypeParameters() {
       // MultiTypeResponse extends BaseMultiResponse<KeyItem, ValueItem>
-      DeltaMerger<MultiTypeResponse> merger =
-          new DeltaMerger<>(MultiTypeResponse.class);
+      StreamMerger<MultiTypeResponse> merger =
+          new StreamMerger<>(MultiTypeResponse.class);
 
       MultiTypeResponse delta1 = new MultiTypeResponse();
       delta1.keys = new ArrayList<>();
@@ -2166,8 +2167,8 @@ class DeltaMergerTest {
     @Test
     void shouldMergeInterfaceField() {
       // 인터페이스 필드가 있는 객체 병합
-      DeltaMerger<InterfaceFieldContainer> merger =
-          new DeltaMerger<>(InterfaceFieldContainer.class);
+      StreamMerger<InterfaceFieldContainer> merger =
+          new StreamMerger<>(InterfaceFieldContainer.class);
 
       InterfaceFieldContainer delta1 = new InterfaceFieldContainer();
       delta1.name = "Container";
@@ -2190,8 +2191,8 @@ class DeltaMergerTest {
     @Test
     void shouldMergeInterfaceListField() {
       // 인터페이스 List 필드가 있는 객체 병합 (인덱스 없이 append)
-      DeltaMerger<InterfaceListContainer> merger =
-          new DeltaMerger<>(InterfaceListContainer.class);
+      StreamMerger<InterfaceListContainer> merger =
+          new StreamMerger<>(InterfaceListContainer.class);
 
       InterfaceListContainer delta1 = new InterfaceListContainer();
       delta1.name = "List";
@@ -2222,8 +2223,8 @@ class DeltaMergerTest {
     @Test
     void shouldMergeIndexedInterfaceListByIndex() {
       // @StreamIndex가 있는 인터페이스 List 병합
-      DeltaMerger<IndexedInterfaceListContainer> merger =
-          new DeltaMerger<>(IndexedInterfaceListContainer.class);
+      StreamMerger<IndexedInterfaceListContainer> merger =
+          new StreamMerger<>(IndexedInterfaceListContainer.class);
 
       IndexedInterfaceListContainer delta1 = new IndexedInterfaceListContainer();
       delta1.documents = new ArrayList<>();
@@ -2251,8 +2252,8 @@ class DeltaMergerTest {
     @Test
     void shouldPreservePolymorphicTypesInList() {
       // 다형성: 같은 List에 여러 구현체가 섞여 있는 경우
-      DeltaMerger<InterfaceListContainer> merger =
-          new DeltaMerger<>(InterfaceListContainer.class);
+      StreamMerger<InterfaceListContainer> merger =
+          new StreamMerger<>(InterfaceListContainer.class);
 
       InterfaceListContainer delta1 = new InterfaceListContainer();
       delta1.documents = new ArrayList<>();
@@ -2278,8 +2279,8 @@ class DeltaMergerTest {
     @Test
     void shouldMergeInterfaceValueMap() {
       // 인터페이스 value Map 병합
-      DeltaMerger<InterfaceMapContainer> merger =
-          new DeltaMerger<>(InterfaceMapContainer.class);
+      StreamMerger<InterfaceMapContainer> merger =
+          new StreamMerger<>(InterfaceMapContainer.class);
 
       InterfaceMapContainer delta1 = new InterfaceMapContainer();
       delta1.documents = new HashMap<>();
@@ -2314,8 +2315,8 @@ class DeltaMergerTest {
     @Test
     void shouldPreservePolymorphicTypesInMap() {
       // Map에서 다형성 타입 보존
-      DeltaMerger<InterfaceMapContainer> merger =
-          new DeltaMerger<>(InterfaceMapContainer.class);
+      StreamMerger<InterfaceMapContainer> merger =
+          new StreamMerger<>(InterfaceMapContainer.class);
 
       InterfaceMapContainer delta1 = new InterfaceMapContainer();
       delta1.documents = new HashMap<>();
