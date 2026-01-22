@@ -4,13 +4,33 @@ plugins {
 }
 
 group = 'me.hanju.fluxhandle'
-version = '0.4.0'
-description = 'A lightweight streaming toolkit for reactive streams with delta merging and listener-based callbacks'
+version = '0.4.2'
+description = 'A reactive stream wrapper providing synchronous result access, cancellation, and streaming callbacks'
 
 java {
-  toolchain { languageVersion = JavaLanguageVersion.of(21) }
+  toolchain {
+    languageVersion = JavaLanguageVersion.of(21)
+  }
   withSourcesJar()
   withJavadocJar()
+}
+
+repositories {
+  mavenCentral()
+  maven { url 'https://jitpack.io' }
+}
+
+dependencies {
+  implementation 'org.slf4j:slf4j-api:2.0.17'
+
+  api 'io.projectreactor:reactor-core:3.8.1'
+  api 'com.github.agent-hanju:streambind:0.1.0'
+
+  testImplementation 'org.junit.jupiter:junit-jupiter:6.0.1'
+  testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+  testRuntimeOnly 'ch.qos.logback:logback-classic:1.5.22'
+  testCompileOnly 'org.projectlombok:lombok:1.18.42'
+  testAnnotationProcessor 'org.projectlombok:lombok:1.18.42'
 }
 
 tasks.withType(JavaCompile).configureEach {
@@ -25,23 +45,7 @@ tasks.withType(Javadoc).configureEach {
 
 tasks.named('test') {
   useJUnitPlatform()
-}
-
-repositories {
-  mavenCentral()
-  maven { url 'https://jitpack.io' }
-}
-
-dependencies {
-  implementation 'com.github.agent-hanju:streambind:0.0.1-SNAPSHOT'
-  api 'org.slf4j:slf4j-api:2.0.17'
-  api 'io.projectreactor:reactor-core:3.8.1'
-
-  testImplementation 'org.junit.jupiter:junit-jupiter:5.14.1'
-  testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-  testRuntimeOnly 'ch.qos.logback:logback-classic:1.5.23'
-  testCompileOnly 'org.projectlombok:lombok:1.18.36'
-  testAnnotationProcessor 'org.projectlombok:lombok:1.18.36'
+  systemProperty 'file.encoding', 'UTF-8'
 }
 
 publishing {
@@ -50,7 +54,7 @@ publishing {
       from components.java
 
       pom {
-        name = 'FluxHandle'
+        name = 'fluxhandle'
         description = project.description
         url = 'https://github.com/agent-hanju/fluxhandle'
         inceptionYear = '2026'

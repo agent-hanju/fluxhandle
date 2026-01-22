@@ -9,39 +9,39 @@ import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import me.hanju.streambind.map.StreamMapper;
-import me.hanju.streambind.merge.StreamMerger;
 import me.hanju.fluxhandle.exception.FluxHandleException;
 import me.hanju.fluxhandle.exception.FluxListenerException;
+import me.hanju.streambind.map.StreamMapper;
+import me.hanju.streambind.merge.StreamMerger;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.scheduler.Schedulers;
 
 /**
- * A flexible streaming handle that supports both direct emission and Flux subscription,
- * with optional delta transformation and automatic merging.
+ * 직접 방출과 Flux 구독을 모두 지원하는 유연한 스트리밍 핸들로,
+ * 선택적 델타 변환과 자동 병합을 제공한다.
  *
  * <p>
- * StreamHandle is the core implementation that provides:
+ * StreamHandle은 다음을 제공하는 핵심 구현체이다:
  * <ul>
- * <li>Direct emission via {@link #emitNext(Object)}, {@link #emitError(Throwable)}, {@link #emitComplete()}</li>
- * <li>Flux subscription via {@link #subscribe(Flux)} or {@link #subscribe(Flux, StreamMapper)}</li>
- * <li>Subscription replacement support - can switch to different Flux sources</li>
- * <li>Automatic delta merging via {@link StreamMerger}</li>
+ * <li>{@link #emitNext(Object)}, {@link #emitError(Throwable)}, {@link #emitComplete()}를 통한 직접 방출</li>
+ * <li>{@link #subscribe(Flux)} 또는 {@link #subscribe(Flux, StreamMapper)}를 통한 Flux 구독</li>
+ * <li>구독 교체 지원 - 다른 Flux 소스로 전환 가능</li>
+ * <li>{@link StreamMerger}를 통한 자동 델타 병합</li>
  * </ul>
  *
  * <p>
- * Delta merging is handled automatically based on field types:
+ * 델타 병합은 필드 타입에 따라 자동으로 처리된다:
  * <ul>
- * <li>String: append (concatenation)</li>
- * <li>Number: sum (addition)</li>
- * <li>Object: recursive merge</li>
- * <li>Primitive List: extend</li>
- * <li>Object List: index-based merge (requires {@code @StreamIndex})</li>
+ * <li>String: 추가 (연결)</li>
+ * <li>Number: 합계 (덧셈)</li>
+ * <li>Object: 재귀적 병합</li>
+ * <li>원시 타입 List: 확장</li>
+ * <li>Object List: 인덱스 기반 병합 ({@code @StreamIndex} 필요)</li>
  * </ul>
  *
  * <p>
- * Example usage with direct emission:
+ * 직접 방출 사용 예시:
  *
  * <pre>{@code
  * StreamHandle<String> handle = new StreamHandle<>(String.class, s -> System.out.println(s));
@@ -54,7 +54,7 @@ import reactor.core.scheduler.Schedulers;
  * }</pre>
  *
  * <p>
- * Example usage with Flux subscription:
+ * Flux 구독 사용 예시:
  *
  * <pre>{@code
  * StreamHandle<String> handle = new StreamHandle<>(String.class, s -> System.out.println(s));
@@ -64,7 +64,7 @@ import reactor.core.scheduler.Schedulers;
  * }</pre>
  *
  * <p>
- * Example usage with transformation:
+ * 변환 사용 예시:
  *
  * <pre>{@code
  * StreamHandle<MyDelta> handle = new StreamHandle<>(MyDelta.class, delta -> {});
@@ -75,12 +75,12 @@ import reactor.core.scheduler.Schedulers;
  * MyDelta result = handle.get();
  * }</pre>
  *
- * @param <R> the type of the result and emitted deltas
+ * @param <R> 결과 및 방출되는 델타의 타입
  * @see Handle
  * @see StreamMapper
  * @see FluxListener
  */
-public class StreamHandle<R> implements Handle<R> {
+public class StreamHandle<R> {
   private static final Logger log = LoggerFactory.getLogger(StreamHandle.class);
 
   private final FluxListener<R> listener;
@@ -94,11 +94,11 @@ public class StreamHandle<R> implements Handle<R> {
   private boolean cancelled = false;
 
   /**
-   * Creates a new StreamHandle with the given result type and listener.
+   * 주어진 결과 타입과 리스너로 새 StreamHandle을 생성한다.
    *
-   * @param resultType the class of the result type
-   * @param listener   the listener to receive streaming events
-   * @throws IllegalArgumentException if any parameter is null
+   * @param resultType 결과 타입의 클래스
+   * @param listener   스트리밍 이벤트를 수신할 리스너
+   * @throws IllegalArgumentException 파라미터 중 하나라도 null인 경우
    */
   public StreamHandle(
       final Class<R> resultType,
@@ -113,36 +113,36 @@ public class StreamHandle<R> implements Handle<R> {
   }
 
   /**
-   * Subscribes to the given Flux without transformation.
+   * 변환 없이 주어진 Flux를 구독한다.
    *
    * <p>
-   * If a previous subscription exists, it will be disposed before subscribing to the new Flux.
-   * The subscription is performed on a bounded elastic scheduler.
+   * 이전 구독이 있으면 새 Flux를 구독하기 전에 해제된다.
+   * 구독은 bounded elastic 스케줄러에서 수행된다.
    *
-   * @param flux the reactive stream to subscribe to
-   * @throws IllegalArgumentException if flux is null
-   * @throws IllegalStateException    if the handle is already completed
+   * @param flux 구독할 리액티브 스트림
+   * @throws IllegalArgumentException flux가 null인 경우
+   * @throws IllegalStateException    핸들이 이미 완료된 경우
    */
   public synchronized void subscribe(final Flux<R> flux) {
     subscribe(flux, List::of);
   }
 
   /**
-   * Subscribes to the given Flux with transformation via mapper.
+   * 매퍼를 통한 변환과 함께 주어진 Flux를 구독한다.
    *
    * <p>
-   * If a previous subscription exists, it will be disposed before subscribing to the new Flux.
-   * The subscription is performed on a bounded elastic scheduler.
+   * 이전 구독이 있으면 새 Flux를 구독하기 전에 해제된다.
+   * 구독은 bounded elastic 스케줄러에서 수행된다.
    *
    * <p>
-   * Note: If using a stateful mapper and replacing subscriptions, ensure proper state management.
-   * Pass a new mapper instance if you want fresh state, or reuse the same mapper to continue accumulating.
+   * 참고: 상태를 가진 매퍼를 사용하고 구독을 교체하는 경우, 적절한 상태 관리를 보장하라.
+   * 새로운 상태를 원하면 새 매퍼 인스턴스를 전달하고, 누적을 계속하려면 동일한 매퍼를 재사용하라.
    *
-   * @param <T>    the type of input elements from the Flux
-   * @param flux   the reactive stream to subscribe to
-   * @param mapper the delta mapper to transform input deltas to result type
-   * @throws IllegalArgumentException if flux or mapper is null
-   * @throws IllegalStateException    if the handle is already completed
+   * @param <T>    Flux의 입력 요소 타입
+   * @param flux   구독할 리액티브 스트림
+   * @param mapper 입력 델타를 결과 타입으로 변환하는 델타 매퍼
+   * @throws IllegalArgumentException flux나 mapper가 null인 경우
+   * @throws IllegalStateException    핸들이 이미 완료된 경우
    */
   public synchronized <T> void subscribe(final Flux<T> flux, final StreamMapper<T, R> mapper) {
     if (flux == null) {
@@ -168,13 +168,13 @@ public class StreamHandle<R> implements Handle<R> {
   }
 
   /**
-   * Emits a result item directly to the handle.
+   * 결과 아이템을 핸들에 직접 방출한다.
    *
    * <p>
-   * The item will be merged into the accumulated result and the listener's
-   * {@link FluxListener#onNext(Object)} will be called.
+   * 아이템은 누적된 결과에 병합되고 리스너의
+   * {@link FluxListener#onNext(Object)}가 호출된다.
    *
-   * @param item the result item to emit
+   * @param item 방출할 결과 아이템
    */
   public synchronized void emitNext(final R item) {
     if (this.completed) {
@@ -200,24 +200,24 @@ public class StreamHandle<R> implements Handle<R> {
   }
 
   /**
-   * Emits an error to the handle.
+   * 에러를 핸들에 방출한다.
    *
    * <p>
-   * The listener's {@link FluxListener#onError(Throwable)} will be called and
-   * the handle will be marked as completed.
+   * 리스너의 {@link FluxListener#onError(Throwable)}가 호출되고
+   * 핸들은 완료로 표시된다.
    *
-   * @param e the error to emit
+   * @param e 방출할 에러
    */
   public synchronized void emitError(final Throwable e) {
     this.onError(e);
   }
 
   /**
-   * Completes the handle successfully.
+   * 핸들을 정상적으로 완료한다.
    *
    * <p>
-   * The listener's {@link FluxListener#onComplete()} will be called and
-   * the result will be available via {@link #get()}.
+   * 리스너의 {@link FluxListener#onComplete()}가 호출되고
+   * 결과는 {@link #get()}을 통해 사용 가능하다.
    */
   public synchronized void emitComplete() {
     if (this.completed) {
@@ -349,13 +349,13 @@ public class StreamHandle<R> implements Handle<R> {
   }
 
   /**
-   * Cancels the streaming and notifies the listener.
+   * 스트리밍을 취소하고 리스너에 알린다.
    *
    * <p>
-   * If already completed, this method has no effect.
-   * The current accumulated result will still be available via {@link #get()}.
+   * 이미 완료된 경우 이 메서드는 아무 효과가 없다.
+   * 현재까지 누적된 결과는 {@link #get()}을 통해 여전히 사용 가능하다.
    */
-  @Override
+
   public synchronized void cancel() {
     if (this.completed) {
       log.warn("cancel failed. already completed.");
@@ -412,42 +412,42 @@ public class StreamHandle<R> implements Handle<R> {
   }
 
   /**
-   * Returns whether this handle was cancelled.
+   * 이 핸들이 취소되었는지 반환한다.
    *
-   * @return {@code true} if cancelled, {@code false} otherwise
+   * @return 취소된 경우 {@code true}, 그렇지 않으면 {@code false}
    */
-  @Override
+
   public boolean isCancelled() {
     return this.cancelled;
   }
 
   /**
-   * Returns whether an error occurred during streaming.
+   * 스트리밍 중 에러가 발생했는지 반환한다.
    *
-   * @return {@code true} if an error occurred, {@code false} otherwise
+   * @return 에러가 발생한 경우 {@code true}, 그렇지 않으면 {@code false}
    */
-  @Override
+
   public boolean isError() {
     return this.error != null;
   }
 
   /**
-   * Returns the error that occurred during streaming, if any.
+   * 스트리밍 중 발생한 에러를 반환한다 (있는 경우).
    *
-   * @return the error, or {@code null} if no error occurred
+   * @return 에러, 또는 에러가 발생하지 않은 경우 {@code null}
    */
-  @Override
+
   public Throwable getError() {
     return this.error;
   }
 
   /**
-   * Blocks until the stream completes and returns the built result.
+   * 스트림이 완료될 때까지 블로킹하고 빌드된 결과를 반환한다.
    *
-   * @return the merged result of type {@code R}
-   * @throws FluxHandleException if an error occurred during streaming
+   * @return {@code R} 타입의 병합된 결과
+   * @throws FluxHandleException 스트리밍 중 에러가 발생한 경우
    */
-  @Override
+
   public R get() {
     try {
       return future.get();
@@ -464,16 +464,16 @@ public class StreamHandle<R> implements Handle<R> {
   }
 
   /**
-   * Blocks until the stream completes or the timeout expires, then returns the built result.
+   * 스트림이 완료되거나 타임아웃이 만료될 때까지 블로킹한 후 빌드된 결과를 반환한다.
    *
-   * @param timeout the maximum time to wait
-   * @param unit    the time unit of the timeout argument
-   * @return the merged result of type {@code R}
-   * @throws TimeoutException         if the wait timed out
-   * @throws IllegalArgumentException if unit is null
-   * @throws FluxHandleException      if an error occurred during streaming
+   * @param timeout 최대 대기 시간
+   * @param unit    타임아웃 인자의 시간 단위
+   * @return {@code R} 타입의 병합된 결과
+   * @throws TimeoutException         대기 시간이 초과된 경우
+   * @throws IllegalArgumentException unit이 null인 경우
+   * @throws FluxHandleException      스트리밍 중 에러가 발생한 경우
    */
-  @Override
+
   public R get(final long timeout, final TimeUnit unit) throws TimeoutException {
     if (unit == null) {
       throw new IllegalArgumentException("unit cannot be null");

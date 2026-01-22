@@ -1,18 +1,48 @@
-.gradle/
-build/
-out/
-!gradle/wrapper/gradle-wrapper.jar
-!gradle/wrapper/gradle-wrapper.properties
+# Ignore Gradle project-specific cache directory
+.gradle
 
+# Ignore Gradle build output directory
+build
+
+# IDE - IntelliJ IDEA
 .idea/
 *.iml
 *.ipr
 *.iws
+out/
 
-.settings/
-.project
+# IDE - Eclipse
 .classpath
-.factorypath
+.project
+.settings/
 bin/
 
+# IDE - VSCode
 .vscode/
+
+# IDE - NetBeans
+nbproject/
+nbbuild/
+dist/
+nbdist/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Java
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+*.war
+*.ear
+*.logs
+*.log
+hs_err_pid*
+
+# Local configuration
+local.properties
+*.local

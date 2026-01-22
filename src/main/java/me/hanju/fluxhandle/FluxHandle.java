@@ -7,18 +7,18 @@ import me.hanju.streambind.map.StreamMapper;
 import reactor.core.publisher.Flux;
 
 /**
- * A convenience wrapper around {@link StreamHandle} that subscribes to a Flux immediately upon creation.
+ * 생성 시 즉시 Flux를 구독하는 {@link StreamHandle}의 편의 래퍼.
  *
  * <p>
- * FluxHandle provides a simple way to process a reactive stream with optional transformation.
- * It delegates all functionality to {@link StreamHandle} and subscribes automatically.
+ * FluxHandle은 선택적 변환과 함께 리액티브 스트림을 처리하는 간단한 방법을 제공한다.
+ * 모든 기능을 {@link StreamHandle}에 위임하고 자동으로 구독한다.
  *
  * <p>
- * For more flexibility (deferred subscription, subscription replacement, direct emission),
- * use {@link StreamHandle} directly.
+ * 더 많은 유연성(지연 구독, 구독 교체, 직접 방출)이 필요하면
+ * {@link StreamHandle}을 직접 사용하라.
  *
  * <p>
- * Example usage with transformation:
+ * 변환을 사용한 예시:
  *
  * <pre>{@code
  * StreamMapper<SdkChunk, MyDelta> mapper = chunk ->
@@ -35,7 +35,7 @@ import reactor.core.publisher.Flux;
  * }</pre>
  *
  * <p>
- * Example usage without transformation:
+ * 변환 없이 사용한 예시:
  *
  * <pre>{@code
  * FluxHandle<String> handle = FluxHandle.of(
@@ -47,26 +47,29 @@ import reactor.core.publisher.Flux;
  * String result = handle.get();  // "Hello World"
  * }</pre>
  *
- * @param <R> the type of the transformed and merged result
+ * @param <R> 변환 및 병합된 결과의 타입
  * @see Handle
  * @see StreamHandle
  * @see StreamMapper
  * @see FluxListener
+ * @deprecated {@link StreamHandle}을 직접 사용하라.
  */
+@Deprecated(since = "0.4.2", forRemoval = true)
 public class FluxHandle<R> implements Handle<R> {
 
   private final StreamHandle<R> delegate;
 
   /**
-   * Creates a new FluxHandle with transformation and subscribes immediately.
+   * 변환을 사용하여 새 FluxHandle을 생성하고 즉시 구독한다.
    *
-   * @param <T>        the type of input elements emitted by the Flux
-   * @param flux       the reactive stream to subscribe to
-   * @param mapper     the delta mapper to transform input deltas
-   * @param resultType the class of the result type
-   * @param listener   the listener to receive streaming events
-   * @return a new FluxHandle instance
-   * @throws IllegalArgumentException if any parameter is null
+   * @param <T>        Flux에서 방출되는 입력 요소의 타입
+   * @param <R>        변환 및 병합된 결과의 타입
+   * @param flux       구독할 리액티브 스트림
+   * @param mapper     입력 델타를 변환하는 델타 매퍼
+   * @param resultType 결과 타입의 클래스
+   * @param listener   스트리밍 이벤트를 수신할 리스너
+   * @return 새 FluxHandle 인스턴스
+   * @throws IllegalArgumentException 파라미터 중 하나라도 null인 경우
    */
   public static <T, R> FluxHandle<R> of(
       final Flux<T> flux,
@@ -85,18 +88,17 @@ public class FluxHandle<R> implements Handle<R> {
   }
 
   /**
-   * Creates a new FluxHandle without transformation and subscribes immediately.
+   * 변환 없이 새 FluxHandle을 생성하고 즉시 구독한다.
    *
    * <p>
-   * Use this factory method when the input type and result type are the same
-   * and no transformation is needed.
+   * 입력 타입과 결과 타입이 동일하고 변환이 필요 없을 때 이 팩토리 메서드를 사용하라.
    *
-   * @param <R>        the type that is both input and result
-   * @param flux       the reactive stream to subscribe to
-   * @param resultType the class of the result type (same as input type)
-   * @param listener   the listener to receive streaming events
-   * @return a new FluxHandle instance
-   * @throws IllegalArgumentException if any parameter is null
+   * @param <R>        입력이자 결과인 타입
+   * @param flux       구독할 리액티브 스트림
+   * @param resultType 결과 타입의 클래스 (입력 타입과 동일)
+   * @param listener   스트리밍 이벤트를 수신할 리스너
+   * @return 새 FluxHandle 인스턴스
+   * @throws IllegalArgumentException 파라미터 중 하나라도 null인 경우
    */
   public static <R> FluxHandle<R> of(
       final Flux<R> flux,
@@ -111,7 +113,7 @@ public class FluxHandle<R> implements Handle<R> {
   }
 
   /**
-   * Private constructor for static factory method.
+   * 정적 팩토리 메서드를 위한 private 생성자.
    */
   private FluxHandle(final StreamHandle<R> delegate) {
     this.delegate = delegate;
